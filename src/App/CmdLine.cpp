@@ -1,4 +1,5 @@
 #include <filesystem>
+#include <windows.h>
 #include <shellapi.h>
 #include <stdexcept>
 #include "Tools/XboxStartup.hpp"
