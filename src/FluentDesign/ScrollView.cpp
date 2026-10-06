@@ -51,6 +51,14 @@ namespace FluentDesign
             case WM_MOUSEWHEEL:
                 return This->OnMouseWheel(GET_WHEEL_DELTA_WPARAM(wParam));
 
+            case WM_TIMER:
+                if (wParam == AnimTimerId)
+                {
+                    This->OnAnimTimer();
+                    return 0;
+                }
+                break;
+
             case WM_MOUSEMOVE:
                 return This->OnMouseMove();
 
@@ -307,6 +315,29 @@ namespace FluentDesign
         RedrawWindow(m_hWnd, NULL, NULL, RDW_INVALIDATE);
     }
 
+    void ScrollView::ApplyScrollPos(int newPos)
+    {
+        if (newPos == m_scrollPos)
+        {
+            return;
+        }
+
+        int delta = m_scrollPos - newPos;
+        m_scrollPos = newPos;
+
+        // Blit the existing pixels and move the children; only the newly exposed strip needs painting
+        ScrollWindowEx(m_hWnd, 0, delta, NULL, NULL, NULL, NULL, SW_INVALIDATE | SW_SCROLLCHILDREN);
+        UpdateScrollBar();
+        UpdateWindow(m_hWnd);
+    }
+
+    void ScrollView::StopAnimation()
+    {
+        KillTimer(m_hWnd, AnimTimerId);
+        m_smooth.Reset(m_scrollPos);
+    }
+
+    // Immediate jump, used for drags, gestures and layout changes
     void ScrollView::ScrollTo(int newPos)
     {
         int maxPos = m_contentHeight - m_viewHeight;
@@ -315,15 +346,38 @@ namespace FluentDesign
         if (newPos > maxPos)
             newPos = maxPos;
 
-        if (newPos != m_scrollPos)
-        {
-            int delta = m_scrollPos - newPos;
-            m_scrollPos = newPos;
+        StopAnimation();
+        ApplyScrollPos(newPos);
+    }
 
-            // Scroll the window content
-            ScrollWindowEx(m_hWnd, 0, delta, NULL, NULL, NULL, NULL, SW_INVALIDATE | SW_SCROLLCHILDREN );
-            UpdateScrollBar();
-            RedrawWindow(m_hWnd, NULL, NULL, RDW_INVALIDATE | RDW_ALLCHILDREN);
+    // Eased scroll, used for wheel, page clicks and keeping the focused control visible
+    void ScrollView::ScrollToSmooth(int newPos)
+    {
+        int maxPos = m_contentHeight - m_viewHeight;
+        if (newPos < 0)
+            newPos = 0;
+        if (newPos > maxPos)
+            newPos = maxPos;
+
+        if (!m_smooth.Active())
+        {
+            m_smooth.Reset(m_scrollPos);
+        }
+        if (newPos == m_smooth.Target())
+        {
+            return;
+        }
+
+        m_smooth.SetTarget(newPos);
+        SetTimer(m_hWnd, AnimTimerId, SmoothScroller::TimerIntervalMs, NULL);
+    }
+
+    void ScrollView::OnAnimTimer()
+    {
+        ApplyScrollPos(m_smooth.Step());
+        if (!m_smooth.Active())
+        {
+            KillTimer(m_hWnd, AnimTimerId);
         }
     }
 
@@ -365,12 +419,12 @@ namespace FluentDesign
             newScrollPos = itemTop;
         }
 
-        ScrollTo(newScrollPos);
+        ScrollToSmooth(newScrollPos);
     }
 
     void ScrollView::ScrollBy(int delta)
     {
-        ScrollTo(m_scrollPos + delta);
+        ScrollToSmooth((m_smooth.Active() ? m_smooth.Target() : m_scrollPos) + delta);
     }
 
     int ScrollView::GetScrollPos() const { return m_scrollPos; }

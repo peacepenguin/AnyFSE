@@ -31,6 +31,7 @@
 #include "Tools/Event.hpp"
 #include "Theme.hpp"
 #include "FluentControl.hpp"
+#include "SmoothScroll.hpp"
 
 namespace FluentDesign
 {
@@ -54,7 +55,14 @@ namespace FluentDesign
         int  m_panStartScrollPos = 0;
         POINT m_panStartPoint{};
 
+        static constexpr UINT_PTR AnimTimerId = 1;
+        SmoothScroller m_smooth;
+
         void SetOffset(int newOffset);
+        void ApplyScrollPos(int newPos);
+        void ScrollToSmooth(int newPos);
+        void StopAnimation();
+        void OnAnimTimer();
 
         void CalculateRects();
         LRESULT OnPaint(HWND hWnd);

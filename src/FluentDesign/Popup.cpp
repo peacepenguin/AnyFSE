@@ -47,6 +47,7 @@ namespace FluentDesign
         m_originalIndex = m_selectedIndex;
         m_hoveredIndex = -1;
         m_nPopupScrollPos = 0;
+        m_smooth.Reset(0);
         m_nPopupViewHeight = min(m_theme.DpiScale(450), (int)items.size() * m_theme.DpiScale(Layout_ItemHeight));
         m_nPopupContentHeight = (int)items.size() * m_theme.DpiScale(Layout_ItemHeight);
         m_itemPressed = -1;
@@ -115,6 +116,7 @@ namespace FluentDesign
             HWND hOwner = GetWindow(m_hWnd, GW_OWNER);
             m_popupVisible = false;
             m_itemPressed = -1;
+            KillTimer(m_hWnd, AnimTimerId);
             DestroyWindow(m_hWnd);
             m_hWnd = NULL;
             if (hOwner)
@@ -368,7 +370,7 @@ namespace FluentDesign
                 if (m_selectedIndex >0 )
                 {
                     m_selectedIndex -= 1;
-                    EnsureVisible(m_selectedIndex);
+                    EnsureVisible(m_selectedIndex, true);
                     InvalidateRect(m_hWnd, NULL, TRUE);
                     OnSelectionChanged.Notify();
                 }
@@ -379,7 +381,7 @@ namespace FluentDesign
                 if (m_selectedIndex < SendMessage(hWnd, LB_GETCOUNT, 0, 0) - 1 )
                 {
                     m_selectedIndex += 1;
-                    EnsureVisible(m_selectedIndex);
+                    EnsureVisible(m_selectedIndex, true);
                     InvalidateRect(m_hWnd, NULL, TRUE);
                     OnSelectionChanged.Notify();
                 }
@@ -429,25 +431,46 @@ namespace FluentDesign
             RemoveWindowSubclass(hWnd, PopupSubclassProc, uIdSubclass);
             break;
 
-        case WM_MOUSEWHEEL:
+        case WM_TIMER:
+            if (wParam == AnimTimerId)
             {
-                // Typically, WHEEL_DELTA is 120, scroll 3 lines per wheel click
-                if (This->m_nPopupContentHeight <= This->m_nPopupViewHeight)
-                {
-                    return 0; // No scrolling needed if content fits
-                }
-
-                int scrollAmount = -GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA * 16 * 3;
-                This->m_itemPressed = -1;
-                This->ScrollTo(This->m_nPopupScrollPos + scrollAmount);
-
+                This->OnAnimTimer();
                 return 0;
             }
+            break;
+
+        case WM_MOUSEWHEEL:
+            This->ScrollByWheel(GET_WHEEL_DELTA_WPARAM(wParam));
+            return 0;
         }
 
         return DefSubclassProc(hWnd, uMsg, wParam, lParam);
     }
 
+    // Three items per wheel notch. Scales with the delta so touchpads and high-resolution wheels
+    // (deltas below WHEEL_DELTA) scroll smoothly instead of rounding to nothing.
+    void Popup::ScrollByWheel(int wheelDelta)
+    {
+        if (m_nPopupContentHeight <= m_nPopupViewHeight)
+        {
+            return; // No scrolling needed if content fits
+        }
+
+        const int pixels = MulDiv(-wheelDelta, 3 * m_theme.DpiScale(Layout_ItemHeight), WHEEL_DELTA);
+        m_itemPressed = -1;
+        ScrollToSmooth((m_smooth.Active() ? m_smooth.Target() : m_nPopupScrollPos) + pixels);
+    }
+
+    void Popup::RefreshHover()
+    {
+        POINT pt;
+        if (m_hWnd && GetCursorPos(&pt) && ScreenToClient(m_hWnd, &pt))
+        {
+            m_hoveredIndex = HitTestItem(m_hWnd, pt);
+        }
+    }
+
+    // The popup is a layered window, so redraw it fully instead of blitting with ScrollWindowEx
     void Popup::ScrollTo(int newPos)
     {
         int maxPos = m_nPopupContentHeight - m_nPopupViewHeight;
@@ -456,17 +479,56 @@ namespace FluentDesign
         if (newPos > maxPos)
             newPos = maxPos;
 
+        KillTimer(m_hWnd, AnimTimerId);
+        m_smooth.Reset(newPos);
+
         if (newPos != m_nPopupScrollPos)
         {
-            int delta = m_nPopupScrollPos - newPos;
             m_nPopupScrollPos = newPos;
-            // Scroll the window content
-            ScrollWindowEx(m_hWnd, 0, delta, NULL, NULL, NULL, NULL, SW_INVALIDATE );
-            RedrawWindow(m_hWnd, NULL, NULL, RDW_INVALIDATE);
+            RefreshHover();
+            InvalidateRect(m_hWnd, NULL, FALSE);
+            UpdateWindow(m_hWnd);
         }
     }
 
-    void Popup::EnsureVisible(int index)
+    void Popup::ScrollToSmooth(int newPos)
+    {
+        int maxPos = m_nPopupContentHeight - m_nPopupViewHeight;
+        if (newPos < 0)
+            newPos = 0;
+        if (newPos > maxPos)
+            newPos = maxPos;
+
+        if (!m_smooth.Active())
+        {
+            m_smooth.Reset(m_nPopupScrollPos);
+        }
+        if (newPos == m_smooth.Target())
+        {
+            return;
+        }
+
+        m_smooth.SetTarget(newPos);
+        SetTimer(m_hWnd, AnimTimerId, SmoothScroller::TimerIntervalMs, NULL);
+    }
+
+    void Popup::OnAnimTimer()
+    {
+        const int pos = m_smooth.Step();
+        if (pos != m_nPopupScrollPos)
+        {
+            m_nPopupScrollPos = pos;
+            RefreshHover();
+            InvalidateRect(m_hWnd, NULL, FALSE);
+            UpdateWindow(m_hWnd);
+        }
+        if (!m_smooth.Active())
+        {
+            KillTimer(m_hWnd, AnimTimerId);
+        }
+    }
+
+    void Popup::EnsureVisible(int index, bool smooth)
     {
         if (index < 0 || m_nPopupContentHeight <= m_nPopupViewHeight)
         {
@@ -507,7 +569,14 @@ namespace FluentDesign
             newScrollPos = itemTop;
         }
 
-        ScrollTo(newScrollPos);
+        if (smooth)
+        {
+            ScrollToSmooth(newScrollPos);
+        }
+        else
+        {
+            ScrollTo(newScrollPos);
+        }
     }
 
     bool Popup::IsPointInClient(HWND hWnd, POINT pt) const

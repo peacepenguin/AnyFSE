@@ -33,6 +33,7 @@
 #include "Tools/Event.hpp"
 #include "Theme.hpp"
 #include "FluentControl.hpp"
+#include "SmoothScroll.hpp"
 
 namespace FluentDesign
 {
@@ -82,6 +83,13 @@ namespace FluentDesign
         int m_nPopupContentHeight = 0;
         int m_itemPressed = -1;
 
+        static constexpr UINT_PTR AnimTimerId = 1;
+        SmoothScroller m_smooth;
+
+        void ScrollToSmooth(int newPos);
+        void OnAnimTimer();
+        void RefreshHover();
+
     public:
         Popup(Theme &theme)
             : FluentControl(theme)
@@ -109,7 +117,8 @@ namespace FluentDesign
         static LRESULT PopupSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 
         void ScrollTo(int newPos);
-        void EnsureVisible(int index);
+        void EnsureVisible(int index, bool smooth = false);
+        void ScrollByWheel(int wheelDelta);
 
         void DrawPopupBackground(HWND hWnd, HDC hdc, RECT rect);
         void DrawPopupItemBackground(HWND hWnd, HDC hdc, RECT itemRect, int itemId);
