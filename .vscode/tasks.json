@@ -172,6 +172,41 @@
         },
         {
             "type": "shell",
+            "label": "Dev: Build offline installer (auto certs)",
+            "command": "powershell.exe",
+            "args": [
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\scripts\\Build-Dev.ps1"
+            ],
+            "problemMatcher": [
+                "$msCompile"
+            ],
+            "group": "build"
+        },
+        {
+            "type": "shell",
+            "label": "Dev: Build and install (auto certs)",
+            "command": "powershell.exe",
+            "args": [
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\scripts\\Build-Dev.ps1",
+                "-Install"
+            ],
+            "problemMatcher": [
+                "$msCompile"
+            ],
+            "group": "build"
+        },
+        {
+            "type": "shell",
             "label": "Build AnyFSE.Installer Debug",
             "command": "msbuild.exe",
             "args": [

@@ -26,6 +26,10 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <Import Project="AnyFSE.Version.props" />
+  <PropertyGroup>
+    <!-- Public package certificate bundled into the installer. scripts\Build-Dev.ps1 overrides it with a locally generated one. -->
+    <TempCertPath Condition="'$(TempCertPath)'==''">$(MSBuildProjectDirectory)\AnyFSE.Temp.cer</TempCertPath>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
@@ -182,7 +186,7 @@
       <ApplicationFiles Include="$(OutDir)AnyFSE.ACSEFilterHook.dll" />
       <ApplicationFiles Include="$(OutDir)AnyFSE.ACSEFilterInjector.exe" />
       <ApplicationFiles Include="$(OutDir)unins000.exe" />
-      <ApplicationFiles Include="$(MSBuildProjectDirectory)\AnyFSE.Temp.cer;$(OutDir)$(AssemblyProduct)-$(AssemblyVersion).identity.appx" />
+      <ApplicationFiles Include="$(TempCertPath);$(OutDir)$(AssemblyProduct)-$(AssemblyVersion).identity.appx" />
       <PackageContent Include="$(PackageDir)\**\*" />
       <PayloadLocalization Include="$(MSBuildProjectDirectory)\localization\*.json" />
       <ApplicationDumpFiles Include="$(OutDir)AnyFSE*.pdb" Exclude="$(OutDir)AnyFSE*-*.pdb" />
