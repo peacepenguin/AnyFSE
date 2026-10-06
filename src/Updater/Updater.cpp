@@ -521,6 +521,10 @@ namespace AnyFSE::Updater
 
     void CheckUpdateAsync(bool includePreRelease, HWND hWnd, UINT uMsg)
     {
+#ifdef ANYFSE_DISABLE_UPDATES
+        log.Debug("Update checks are disabled in this build");
+        return;
+#endif
         log.Debug("CheckUpdateAsync");
 
         std::lock_guard<std::mutex> lock(m_readMutex);
@@ -659,6 +663,9 @@ namespace AnyFSE::Updater
 
     int ScheduledCheckAsync(const std::wstring& lastCheck, int checkInterval, bool includePreRelease, HWND hWnd, UINT uMsg)
     {
+#ifdef ANYFSE_DISABLE_UPDATES
+        return checkInterval;
+#endif
         if (checkInterval <= 0)
         {
             return checkInterval;

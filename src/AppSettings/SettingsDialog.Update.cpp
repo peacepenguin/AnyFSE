@@ -157,6 +157,9 @@ namespace AnyFSE::App::AppSettings::Settings
 
     void SettingsDialog::OnCheckUpdate()
     {
+#ifdef ANYFSE_DISABLE_UPDATES
+        return;
+#endif
         Updater::CheckUpdateAsync(Config::UpdatePreRelease, m_hDialog, WM_UPDATE_NOTIFICATION);
         UpdateVersionStatusDelay(10);
     }

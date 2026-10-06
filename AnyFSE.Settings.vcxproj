@@ -101,6 +101,12 @@
             <ModuleDefinitionFile>src\AppSettings\AppSettings.def</ModuleDefinitionFile>
         </Link>
     </ItemDefinitionGroup>
+    <!-- Dev builds (scripts\Build-Dev.ps1) pass -p:DisableUpdates=true so they never contact the upstream release feeds. -->
+    <ItemDefinitionGroup Condition="'$(DisableUpdates)'=='true'">
+        <ClCompile>
+            <PreprocessorDefinitions>ANYFSE_DISABLE_UPDATES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+        </ClCompile>
+    </ItemDefinitionGroup>
 
     <ItemGroup>
         <ClCompile Include="src\Ally\*.cpp" />

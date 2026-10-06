@@ -14,6 +14,9 @@
 .PARAMETER Configuration
     Release (default) or Debug.
 
+.PARAMETER AllowUpdates
+    Keep the updater enabled. By default dev builds compile it out (ANYFSE_DISABLE_UPDATES).
+
 .PARAMETER Install
     Launch the freshly built offline installer elevated and wait for it to finish.
 
@@ -24,7 +27,8 @@
 param(
     [ValidateSet('Release', 'Debug')]
     [string] $Configuration = 'Release',
-    [switch] $Install
+    [switch] $Install,
+    [switch] $AllowUpdates
 )
 
 Set-StrictMode -Version Latest
@@ -90,6 +94,8 @@ New-Item -ItemType Directory -Path $devDir -Force | Out-Null
 $tempCert = Join-Path $devDir 'AnyFSE.Temp.cer'
 Export-Certificate -Cert $packageCert -FilePath $tempCert -Force | Out-Null
 $overrides += "-p:TempCertPath=$tempCert"
+# Dev builds must not offer or install upstream releases over the build under test
+if (-not $AllowUpdates) { $overrides += '-p:DisableUpdates=true' }
 
 # --- Build (same steps as .vscode\tasks.json) ----------------------------------------------------------------------
 $common = @("-property:Configuration=$Configuration", '-property:Platform=x64') + $overrides
