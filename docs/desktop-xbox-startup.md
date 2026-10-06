@@ -1,7 +1,7 @@
 # Desktop Xbox startup
 
 AnyFSE ports the XboxStartupEnabler patcher into its native C++ runtime. The
-implementation is adapted from `peacepenguin/XboxStartupEnabler` at commit
+implementation is adapted from `victorrjimenezz/XboxStartupEnabler` at commit
 `e52ab92951f56b7c1ee404fa9c870a6a3d2732e5` (MIT; see
 `THIRD_PARTY_NOTICES/XboxStartupEnabler.txt`). No separate .NET application is
 required.
