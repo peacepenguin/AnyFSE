@@ -35,7 +35,24 @@ jobs:
 
       - name: Build offline installer
         shell: pwsh
-        run: ./scripts/Build-Dev.ps1 -Configuration Release
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'build.log'
+          $failed = $false
+          try {
+            ./scripts/Build-Dev.ps1 -Configuration Release *>&1 | Tee-Object -FilePath $log
+          } catch {
+            $failed = $true
+            ($_ | Out-String) | Tee-Object -FilePath $log -Append
+          }
+          if ($failed) {
+            # Surface the failure as an annotation so it is readable without opening the raw log
+            $lines = Get-Content $log
+            $errors = $lines | Select-String -Pattern 'error|exception|failed|not found|throw' | Select-Object -Last 40 | ForEach-Object { $_.Line }
+            $text = "Errors:`n" + ($errors -join "`n") + "`n`nLast lines:`n" + (($lines | Select-Object -Last 40) -join "`n")
+            $text = $text.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Build-Dev.ps1 failed::$text"
+            exit 1
+          }
 
       - name: Collect installer
         shell: pwsh
