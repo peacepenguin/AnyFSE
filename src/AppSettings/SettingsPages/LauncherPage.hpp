@@ -27,6 +27,7 @@ namespace AnyFSE::App::AppSettings::Settings::Page
             , m_launcherCombo(m_theme)
             , m_browseButton(m_theme)
             , m_enableHomeAppSelectionButton(m_theme)
+            , m_restoreDesktopXboxStartupButton(m_theme)
             , m_fseOnStartupToggle(m_theme)
             , m_fseExitOnHomeExitToggle(m_theme)
             , m_asAdminToggle(m_theme)
@@ -75,6 +76,7 @@ namespace AnyFSE::App::AppSettings::Settings::Page
         ComboBox m_launcherCombo;
         Button m_browseButton;
         Button m_enableHomeAppSelectionButton;
+        Button m_restoreDesktopXboxStartupButton;
         Toggle m_fseOnStartupToggle;
         Toggle m_fseExitOnHomeExitToggle;
         Toggle m_asAdminToggle;
@@ -92,6 +94,7 @@ namespace AnyFSE::App::AppSettings::Settings::Page
         SettingsLine * m_pLauncherLine = nullptr;
         SettingsLine * m_pBrowseLine = nullptr;
         SettingsLine * m_pHomeAppSelectionLine = nullptr;
+        SettingsLine * m_pRestoreDesktopXboxStartupLine = nullptr;
         SettingsLine * m_pFseOnStartupLine = nullptr;
         SettingsLine * m_pExitOnHomeExitLine = nullptr;
         SettingsLine * m_pAsAdminLine = nullptr;
@@ -109,6 +112,7 @@ namespace AnyFSE::App::AppSettings::Settings::Page
         void OnBrowseLauncher();
         void OnRestoreGamingPC();
         void OnEnableHomeAppSelection();
+        void OnRestoreDesktopXboxStartup();
         void UpdateHomeAppSelection();
         void UpdateRestoreGamingPC();
         void OnCustomChanged();

@@ -2,6 +2,7 @@
 #include <windows.h>
 #include "Tools/Registry.hpp"
 #include "Tools/Elevated.hpp"
+#include "Tools/XboxStartup.hpp"
 #include "App/Constants.hpp"
 #include "App/GamingExperience.hpp"
 #include "Tools/Event.hpp"
@@ -30,6 +31,15 @@ namespace AnyFSE::App::AppSettings::Settings::Page
             Layout::CustomSettingsWidth, Layout::BrowseHeight);
         m_pHomeAppSelectionLine->SetIcon(L'\xE7BA');
         m_pHomeAppSelectionLine->Show(false);
+
+        m_pRestoreDesktopXboxStartupLine = &m_dialog.AddSettingsLine(settingPageList, top,
+            Translate(L"settingsRestoreDesktopXboxStartup"), Translate(L"settingsRestoreDesktopXboxStartupDescription"),
+            m_restoreDesktopXboxStartupButton, Layout::LineHeight, Layout::LinePadding, 0,
+            Layout::CustomSettingsWidth, Layout::BrowseHeight);
+        m_pRestoreDesktopXboxStartupLine->SetIcon(L'\xE777');
+        m_pRestoreDesktopXboxStartupLine->Show(false);
+        m_restoreDesktopXboxStartupButton.SetText(Translate(L"settingsRestoreDesktopXboxStartupButton"));
+        m_restoreDesktopXboxStartupButton.OnChanged += delegate(OnRestoreDesktopXboxStartup);
 
         m_pLauncherLine = &m_dialog.AddSettingsLine(settingPageList, top,
             Translate(L"settingsChooseHomeApp"),
@@ -114,7 +124,7 @@ namespace AnyFSE::App::AppSettings::Settings::Page
         m_browseButton.OnChanged += delegate(OnBrowseLauncher);
 
         m_enableHomeAppSelectionButton.SetText(
-            Translate(L"settingsEnableHomeAppSelection"));
+            Translate(L"settingsEnableDesktopXboxStartup"));
         m_enableHomeAppSelectionButton.OnChanged += delegate(OnEnableHomeAppSelection);
     }
 
@@ -318,15 +328,33 @@ namespace AnyFSE::App::AppSettings::Settings::Page
     void LauncherPage::OnEnableHomeAppSelection()
     {
         m_enableHomeAppSelectionButton.Enable(false);
-        Elevated::Call(c::ElevatedEnableGamingHandheld);
-        m_enableHomeAppSelectionButton.Enable(true);
+        const bool succeeded = Elevated::Call(c::ElevatedApplyDesktopXboxStartup);
         UpdateHomeAppSelection();
+        MessageBoxW(m_dialog.GetHwnd(), Translate(succeeded ? L"desktopXboxStartupComplete" : L"desktopXboxStartupFailed").c_str(),
+            Translate(L"desktopXboxStartupTitle").c_str(), MB_OK | (succeeded ? MB_ICONINFORMATION : MB_ICONERROR));
+    }
+
+    void LauncherPage::OnRestoreDesktopXboxStartup()
+    {
+        m_restoreDesktopXboxStartupButton.Enable(false);
+        const bool succeeded = Elevated::Call(c::ElevatedRestoreDesktopXboxStartup);
+        UpdateHomeAppSelection();
+        MessageBoxW(m_dialog.GetHwnd(), Translate(succeeded ? L"desktopXboxStartupComplete" : L"desktopXboxStartupFailed").c_str(),
+            Translate(L"desktopXboxStartupTitle").c_str(), MB_OK | (succeeded ? MB_ICONINFORMATION : MB_ICONERROR));
     }
 
     void LauncherPage::UpdateHomeAppSelection()
     {
-        const bool available = GamingExperience::IsGamingHandheld();
-        m_pHomeAppSelectionLine->Show(!available);
+        const auto desktop = Tools::XboxStartup::Inspect();
+        const bool available = GamingExperience::IsGamingHandheld() || desktop.allPatched;
+        const bool legacySpoof = Registry::ValueExists(c::DeviceFormRegKey, c::DeviceFormBackupRegValue);
+        m_pHomeAppSelectionLine->Show(!available || (legacySpoof && !desktop.allPatched));
+        m_pHomeAppSelectionLine->SetDescription(desktop.canApply
+            ? Translate(L"settingsDesktopXboxStartupDescription")
+            : Translate(L"settingsDesktopXboxStartupUnsupported") + L"\n" + desktop.details);
+        m_enableHomeAppSelectionButton.Enable(desktop.canApply);
+        m_pRestoreDesktopXboxStartupLine->Show(desktop.anyPatched);
+        m_restoreDesktopXboxStartupButton.Enable(desktop.canRestore);
         m_pLauncherLine->Show(available);
         m_pBrowseLine->Show(available);
         m_pFseOnStartupLine->Show(available);

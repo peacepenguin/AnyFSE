@@ -38,6 +38,7 @@ namespace AnyFSE::App::CmdLine
     bool Elevated(LPSTR lpCmdLine, int &result);
     bool HidListenerJob(LPSTR lpCmdLine, int &result);
     bool HidListener(LPSTR lpCmdLine, int &result);
+    bool DesktopXboxStartup(LPSTR lpCmdLine, int &result);
     bool FSE(LPSTR lpCmdLine, int &result);
     bool Settings(LPSTR lpCmdLine, int &result);
 };

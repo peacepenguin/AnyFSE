@@ -190,3 +190,10 @@ You can specify custom position of loop via filename. To do this - name should c
 - 'm' or 'M' - mute video during loop
 - '4000' and '5000' position in milliseconds from start of video to rewind to during loop.
 
+
+## Desktop Xbox startup testing
+
+AnyFSE integrates XboxStartupEnabler to enable Home app selection and Xbox mode at sign-in
+without spoofing your PC's device form factor. Use **Enable Xbox startup on PC** in settings,
+then sign out or restart. This is an explicit system-file patch with compatibility checks
+and matching-backup restoration. See [desktop Xbox startup](docs/desktop-xbox-startup.md).

@@ -8,6 +8,18 @@ namespace AnyFSE::App::Constants
     inline constexpr wchar_t PackageAtomName[] = L"ArtemShpynov.AnyFSE_by4wjhxmygwn4";
     inline constexpr wchar_t WaitingExitMutex[] = L"ArtemShpynov.AnyFSE_WaitingExitFSE";
 
+    // Desktop Xbox startup support (explicit opt-in system-file patch).
+    inline constexpr wchar_t ElevatedApplyDesktopXboxStartup[] = L"ApplyDesktopXboxStartup";
+    inline constexpr wchar_t ElevatedRestoreDesktopXboxStartup[] = L"RestoreDesktopXboxStartup";
+    inline constexpr wchar_t XboxStartupGameModeDll[] = L"gamemode.dll";
+    inline constexpr wchar_t XboxStartupSettingsDll[] = L"SettingsHandlers_Gaming.dll";
+    inline constexpr wchar_t XboxStartupShellDll[] = L"twinui.pcshell.dll";
+    inline constexpr wchar_t XboxStartupBackupDirectory[] = L"AnyFSE-XboxStartupBackups";
+    inline constexpr wchar_t XboxStartupBackupSuffix[] = L".original";
+    inline constexpr wchar_t XboxStartupNewSuffix[] = L".anyfse-new-";
+    inline constexpr wchar_t XboxStartupOldSuffix[] = L".anyfse-old-";
+    inline constexpr wchar_t XboxStartupBackupSecurity[] = L"O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)";
+
     // Product files
     inline constexpr wchar_t AnyFseSettingsDll[] = L"AnyFSE.Settings.dll";
     inline constexpr wchar_t AnyFseExe[] = L"AnyFSE.exe";

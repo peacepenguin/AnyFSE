@@ -1,4 +1,7 @@
 #include <filesystem>
+#include <shellapi.h>
+#include <stdexcept>
+#include "Tools/XboxStartup.hpp"
 
 #include "Tools/Registry.hpp"
 #include "Tools/Elevated.hpp"
@@ -144,7 +147,13 @@ namespace AnyFSE::App::CmdLine
 
         Elevated::Register(Constants::ElevatedStartLauncher,  []() { Launchers::StartLauncher(false); });
         Elevated::Register(Constants::ElevatedStartupApps, []() { Launchers::LaunchStartupApps(true); });
-        Elevated::Register(Constants::ElevatedEnableGamingHandheld, GamingExperience::EnableGamingHandheld);
+        Elevated::Register(Constants::ElevatedApplyDesktopXboxStartup, []() {
+            Tools::XboxStartup::Apply();
+            // Undo only AnyFSE's previous form-factor spoof when migrating to the narrower patch.
+            if (GamingExperience::IsGamingHandheld() && Registry::ValueExists(Constants::DeviceFormRegKey, Constants::DeviceFormBackupRegValue))
+                GamingExperience::RestoreGamingPC();
+        });
+        Elevated::Register(Constants::ElevatedRestoreDesktopXboxStartup, Tools::XboxStartup::Restore);
         Elevated::Register(Constants::ElevatedRestoreGamingPC, GamingExperience::RestoreGamingPC);
 
         result = Elevated::CallHandler() ? 0 : 1;
@@ -180,6 +189,35 @@ namespace AnyFSE::App::CmdLine
         // Compatibility with existing protocol links and old Run entries: delegate to the same task.
         Ally::RemoveLegacyListenerAutorun();
         result = (!Ally::IsListenerRequired() || Elevated::StartListenerTask()) ? 0 : 1;
+        return true;
+    }
+
+    bool DesktopXboxStartup(LPSTR lpCmdLine, int& result)
+    {
+        int argc = 0;
+        LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        if (!argv) return false;
+        const bool requested = argc >= 2 && !_wcsicmp(argv[1], L"/XboxStartup");
+        if (!requested) { LocalFree(argv); return false; }
+        const std::wstring verb = argc == 3 ? argv[2] : L"";
+        LocalFree(argv);
+        if (!_wcsicmp(verb.c_str(), L"status") || !_wcsicmp(verb.c_str(), L"verify"))
+        {
+            const auto status = Tools::XboxStartup::Inspect();
+            log.Info("Desktop Xbox startup status:\n%ls", status.details.c_str());
+            MessageBoxW(nullptr, status.details.c_str(), L"AnyFSE desktop Xbox startup", MB_OK | MB_ICONINFORMATION);
+            result = status.canApply ? 0 : 1;
+        }
+        else if (!_wcsicmp(verb.c_str(), L"apply") || !_wcsicmp(verb.c_str(), L"restore"))
+        {
+            const bool apply = !_wcsicmp(verb.c_str(), L"apply");
+            result = Elevated::Call(apply ? Constants::ElevatedApplyDesktopXboxStartup : Constants::ElevatedRestoreDesktopXboxStartup) ? 0 : 1;
+        }
+        else
+        {
+            MessageBoxW(nullptr, L"Usage: AnyFSE.exe /XboxStartup status|verify|apply|restore", L"AnyFSE desktop Xbox startup", MB_OK | MB_ICONERROR);
+            result = 2;
+        }
         return true;
     }
 

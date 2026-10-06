@@ -72,6 +72,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
            CmdLine::Elevated(lpCmdLine, exitCode)
         || CmdLine::HidListenerJob(lpCmdLine, exitCode)
         || CmdLine::HidListener(lpCmdLine, exitCode)
+        || CmdLine::DesktopXboxStartup(lpCmdLine, exitCode)
         || !App::ApiIsAvailable(hInstance)
         || GamingExperience::RestoreEnterFSEConfirmation()
         || Ally::EnsureListener()
