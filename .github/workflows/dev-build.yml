@@ -1,0 +1,50 @@
+name: Dev build
+
+# Builds a test installer signed with a throwaway self-signed certificate (see scripts/Build-Dev.ps1).
+# The installer bundles its own public certificate, so it installs on a real device without extra trust steps.
+# Not for release: every run generates a new certificate.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Windows SDK
+        shell: pwsh
+        run: |
+          $sdks = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Directory | Select-Object -ExpandProperty Name
+          Write-Host "Installed SDKs: $($sdks -join ', ')"
+          if ($sdks -notcontains '10.0.26100.0') { throw 'Windows SDK 10.0.26100.0 is required by the projects but is not installed on this runner.' }
+
+      - name: Build offline installer
+        shell: pwsh
+        run: ./scripts/Build-Dev.ps1 -Configuration Release
+
+      - name: Collect installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $installer = Get-ChildItem build/Release -Filter 'AnyFSE.Installer.Offline.*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $installer) { throw 'Offline installer was not produced.' }
+          Copy-Item $installer.FullName dist/
+          Get-ChildItem build/Release -Filter '*.pdb.zip' | Copy-Item -Destination dist/
+          Get-FileHash dist/* -Algorithm SHA256 | Format-Table Hash, Path -AutoSize | Out-String -Width 250 | Write-Host
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyFSE-dev-installer
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
