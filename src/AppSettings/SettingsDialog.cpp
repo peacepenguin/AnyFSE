@@ -813,15 +813,10 @@ namespace AnyFSE::App::AppSettings::Settings
 
         Config::Save();
 
+        Ally::UpdateListenerAutorun();
         if (!Ally::UpdateHidListener() && Ally::CheckListener())
         {
-            const std::wstring command = L"\"" + Tools::Paths::GetExeFileName() + L"\" /HidListener";
-            Registry::WriteString(Constants::HidListenerAutorunKey, Constants::HidListenerAutorunValue, command);
             Process::StartProtocol(Constants::AnyFseProtocolHidListener);
-        }
-        else
-        {
-            Registry::DeleteValue(Constants::HidListenerAutorunKey, Constants::HidListenerAutorunValue);
         }
     }
 

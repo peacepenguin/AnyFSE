@@ -301,18 +301,6 @@ namespace Ally
         }
     }
 
-    // The listener runs elevated at logon, so it can install the injector service itself instead of
-    // depending on the Settings page having been applied once from desktop mode.
-    static void EnsureInjectorService()
-    {
-        if (!IsNativeHandlerEnabled() || IsInjectorEnabled())
-        {
-            return;
-        }
-        log.Debug("Ally HID is enabled but the injector service is not running; starting it");
-        Services::EnableInjectorService();
-    }
-
     DWORD WINAPI HIDListener(LPVOID lpParam)
     {
         bool allyEnabled = Config::AllyHidEnable && Ally::IsSupported();
@@ -332,7 +320,6 @@ namespace Ally
         if (allyEnabled)
         {
             Load();
-            EnsureInjectorService();
         }
 
         // Create hidden window for raw input
@@ -447,8 +434,29 @@ namespace Ally
         return false;
     }
 
+    bool IsListenerRequired()
+    {
+        return Config::HotkeysEnable || (Config::AllyHidEnable && Ally::IsSupported());
+    }
+
+    // The listener is what actually runs the button actions, so it must be started at every logon,
+    // whether or not it happens to be running right now.
+    void UpdateListenerAutorun()
+    {
+        if (IsListenerRequired())
+        {
+            const std::wstring command = L"\"" + AnyFSE::Tools::Paths::GetExeFileName() + L"\" /HidListener";
+            Registry::WriteString(Constants::HidListenerAutorunKey, Constants::HidListenerAutorunValue, command);
+        }
+        else
+        {
+            Registry::DeleteValue(Constants::HidListenerAutorunKey, Constants::HidListenerAutorunValue);
+        }
+    }
+
     bool EnsureListener()
     {
+        UpdateListenerAutorun();
         if (Ally::CheckListener())
         {
             log.Debug("Background HID/hotkey listener is not running; starting it\n");
@@ -459,8 +467,7 @@ namespace Ally
 
     bool CheckListener()
     {
-        return (Config::HotkeysEnable || (Config::AllyHidEnable && Ally::IsSupported()))
-            && FindWindow(HidListenerClass, NULL) == NULL;
+        return IsListenerRequired() && FindWindow(HidListenerClass, NULL) == NULL;
     }
 
     bool SetupListener()
