@@ -106,6 +106,13 @@ $overrides += "-p:TempCertPath=$tempCert"
 # Dev builds must not offer or install upstream releases over the build under test
 if (-not $AllowUpdates) { $overrides += '-p:DisableUpdates=true' }
 
+# The project files shell out to Windows PowerShell (powershell.exe) to find the signing certificate. When this script runs
+# under PowerShell 7 that child inherits pwsh's module path and fails to load the certificate provider's parameters
+# (e.g. "A parameter cannot be found that matches ... CodeSigningCert"), so hand it the machine's default module path.
+if ($PSVersionTable.PSEdition -eq 'Core') {
+    $env:PSModulePath = [Environment]::GetEnvironmentVariable('PSModulePath', 'Machine')
+}
+
 # --- Build (same steps as .vscode\tasks.json) ----------------------------------------------------------------------
 $common = @("-property:Configuration=$Configuration", '-property:Platform=x64') + $overrides
 $sln = Join-Path $repo 'AnyFSE.sln'
