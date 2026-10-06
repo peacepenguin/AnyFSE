@@ -124,6 +124,15 @@ namespace AnyFSE
 
             RegisterUninstall();
             ToolsEx::ScheduledTask::RegisterAnyFSETask(Tools::Paths::GetInstallPath());
+            try
+            {
+                ToolsEx::ScheduledTask::RegisterListenerTask(Tools::Paths::GetInstallPath());
+            }
+            catch (const std::exception& e)
+            {
+                // Not fatal: the listener is still started by the app and by the HKCU Run entry
+                log.Warn(e, "Could not register the HID listener logon task; continuing installation");
+            }
 
             if (acseServiceWasRunning)
             {

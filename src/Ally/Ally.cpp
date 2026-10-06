@@ -316,6 +316,21 @@ namespace Ally
             return -1;
         }
 
+        // The logon task and the HKCU Run entry can both start a listener within seconds of each other, before either has
+        // created its window, so FindWindow alone is racy. A named mutex makes the check atomic. Access denied means
+        // another (elevated) listener owns it and this process cannot open it.
+        struct InstanceGuard
+        {
+            HANDLE handle = CreateMutexW(nullptr, TRUE, Constants::HidListenerMutex);
+            bool taken = handle != nullptr && GetLastError() != ERROR_ALREADY_EXISTS;
+            ~InstanceGuard() { if (handle) CloseHandle(handle); }
+        } instance;
+        if (!instance.taken)
+        {
+            log.Debug("Another HID/hotkey listener already owns the instance mutex");
+            return -1;
+        }
+
         AnyFSE::Tools::EnablePowerEfficencyMode(true);
         if (allyEnabled)
         {

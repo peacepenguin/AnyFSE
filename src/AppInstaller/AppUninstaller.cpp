@@ -537,6 +537,7 @@ namespace AnyFSE
     void AppUninstaller::Uninstall(bool update)
     {
         ToolsEx::ScheduledTask::DeleteAnyFSETask();
+        ToolsEx::ScheduledTask::DeleteListenerTask();
         Ally::Services::DisableInjectorService();
 
         TerminateAnyFSE();

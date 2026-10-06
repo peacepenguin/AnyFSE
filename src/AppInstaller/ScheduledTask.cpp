@@ -131,16 +131,85 @@ namespace AnyFSE::ToolsEx::ScheduledTask
             _variant_t(userSid.c_str()), _variant_t(), TASK_LOGON_INTERACTIVE_TOKEN, _variant_t(security.c_str()), &registered));
     }
 
-    void DeleteAnyFSETask()
+    void RegisterListenerTask(const std::wstring &installPath)
     {
         ComScope com;
         auto service = Connect();
         wrl::ComPtr<ITaskFolder> folder;
         Check(service->GetFolder(_bstr_t(c::TaskSchedulerRoot), &folder));
-        const HRESULT result = folder->DeleteTask(_bstr_t(c::AnyFseTaskName), 0);
-        if (result != HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
+
+        wrl::ComPtr<ITaskDefinition> task;
+        Check(service->NewTask(0, &task));
+        const std::wstring userSid = CurrentUserSid();
+
+        wrl::ComPtr<IPrincipal> principal;
+        Check(task->get_Principal(&principal));
+        Check(principal->put_UserId(_bstr_t(userSid.c_str())));
+        Check(principal->put_LogonType(TASK_LOGON_INTERACTIVE_TOKEN));
+        Check(principal->put_RunLevel(TASK_RUNLEVEL_HIGHEST));
+
+        // Fire when the installing user logs on, with a short delay so the HID devices are enumerated first.
+        wrl::ComPtr<ITriggerCollection> triggers;
+        Check(task->get_Triggers(&triggers));
+        wrl::ComPtr<ITrigger> trigger;
+        Check(triggers->Create(TASK_TRIGGER_LOGON, &trigger));
+        wrl::ComPtr<ILogonTrigger> logon;
+        Check(trigger.As(&logon));
+        Check(logon->put_UserId(_bstr_t(userSid.c_str())));
+        Check(logon->put_Delay(_bstr_t(c::ListenerTaskLogonDelay)));
+        Check(logon->put_Enabled(VARIANT_TRUE));
+
+        wrl::ComPtr<ITaskSettings> settings;
+        Check(task->get_Settings(&settings));
+        Check(settings->put_Enabled(VARIANT_TRUE));
+        Check(settings->put_AllowDemandStart(VARIANT_TRUE));
+        Check(settings->put_StartWhenAvailable(VARIANT_TRUE));
+        Check(settings->put_DisallowStartIfOnBatteries(VARIANT_FALSE));
+        Check(settings->put_StopIfGoingOnBatteries(VARIANT_FALSE));
+        Check(settings->put_MultipleInstances(TASK_INSTANCES_IGNORE_NEW));
+        // The listener is long-lived; the default 72 hour limit would kill it.
+        Check(settings->put_ExecutionTimeLimit(_bstr_t(L"PT0S")));
+
+        wrl::ComPtr<IActionCollection> actions;
+        Check(task->get_Actions(&actions));
+        wrl::ComPtr<IAction> action;
+        Check(actions->Create(TASK_ACTION_EXEC, &action));
+        wrl::ComPtr<IExecAction> exec;
+        Check(action.As(&exec));
+        const std::wstring executable = (std::filesystem::path(installPath) / c::AnyFseExe).wstring();
+        Check(exec->put_Path(_bstr_t(executable.c_str())));
+        Check(exec->put_Arguments(_bstr_t(c::HidListenerJobArgument)));
+        Check(exec->put_WorkingDirectory(_bstr_t(installPath.c_str())));
+
+        const std::wstring security = std::wstring(c::AnyFseTaskSecurityPrefix) + userSid + L")";
+        wrl::ComPtr<IRegisteredTask> registered;
+        Check(folder->RegisterTaskDefinition(_bstr_t(c::AnyFseListenerTaskName), task.Get(), TASK_CREATE_OR_UPDATE | TASK_DONT_ADD_PRINCIPAL_ACE,
+            _variant_t(userSid.c_str()), _variant_t(), TASK_LOGON_INTERACTIVE_TOKEN, _variant_t(security.c_str()), &registered));
+    }
+
+    namespace
+    {
+        void DeleteTaskByName(const wchar_t *name)
         {
-            Check(result);
+            ComScope com;
+            auto service = Connect();
+            wrl::ComPtr<ITaskFolder> folder;
+            Check(service->GetFolder(_bstr_t(c::TaskSchedulerRoot), &folder));
+            const HRESULT result = folder->DeleteTask(_bstr_t(name), 0);
+            if (result != HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
+            {
+                Check(result);
+            }
         }
+    }
+
+    void DeleteAnyFSETask()
+    {
+        DeleteTaskByName(c::AnyFseTaskName);
+    }
+
+    void DeleteListenerTask()
+    {
+        DeleteTaskByName(c::AnyFseListenerTaskName);
     }
 }

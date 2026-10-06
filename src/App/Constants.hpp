@@ -13,6 +13,10 @@ namespace AnyFSE::App::Constants
     inline constexpr wchar_t AnyFseExe[] = L"AnyFSE.exe";
     inline constexpr const wchar_t* PopupperProcessNames[] = { L"SystemSettings.exe" };
     inline constexpr wchar_t AnyFseTaskName[] = L"AnyFSE";
+    inline constexpr wchar_t AnyFseListenerTaskName[] = L"AnyFSE Listener";
+    inline constexpr wchar_t HidListenerJobArgument[] = L"/HidListenerJob";
+    inline constexpr wchar_t HidListenerMutex[] = L"Local\\AnyFSE.HidListener";
+    inline constexpr wchar_t ListenerTaskLogonDelay[] = L"PT5S";
     inline constexpr wchar_t ElevatedEventPrefix[] = L"Local\\AnyFSE.Task.Command.";
     inline constexpr wchar_t ElevatedCallEvent[] = L"Local\\AnyFSE.Task.Call";
     inline constexpr wchar_t ElevatedStartLauncher[] = L"StartLauncher";
