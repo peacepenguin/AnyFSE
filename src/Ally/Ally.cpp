@@ -301,6 +301,18 @@ namespace Ally
         }
     }
 
+    // The listener runs elevated at logon, so it can install the injector service itself instead of
+    // depending on the Settings page having been applied once from desktop mode.
+    static void EnsureInjectorService()
+    {
+        if (!IsNativeHandlerEnabled() || IsInjectorEnabled())
+        {
+            return;
+        }
+        log.Debug("Ally HID is enabled but the injector service is not running; starting it");
+        Services::EnableInjectorService();
+    }
+
     DWORD WINAPI HIDListener(LPVOID lpParam)
     {
         bool allyEnabled = Config::AllyHidEnable && Ally::IsSupported();
@@ -320,6 +332,7 @@ namespace Ally
         if (allyEnabled)
         {
             Load();
+            EnsureInjectorService();
         }
 
         // Create hidden window for raw input
