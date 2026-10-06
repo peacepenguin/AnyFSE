@@ -61,9 +61,18 @@ function Invoke-Step([string] $Title, [scriptblock] $Command) {
 if (-not (Get-Command msbuild.exe -ErrorAction SilentlyContinue)) {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (-not (Test-Path $vswhere)) { throw 'vswhere.exe not found. Install Visual Studio 2022 with the Desktop development with C++ workload.' }
-    $vsInstall = & $vswhere -version '[17.0,18.0)' -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath |
-        Select-Object -First 1
-    if (-not $vsInstall) { throw 'No Visual Studio 2022 installation with the C++ tools was found.' }
+    $cppTools = 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'
+    # Prefer VS 2022 (the projects use toolset v143), then any VS 2022 product, then the newest VS with the C++ tools
+    $vsInstall = @(
+        { & $vswhere -version '[17.0,18.0)' -products * -requires $cppTools -property installationPath },
+        { & $vswhere -version '[17.0,18.0)' -products * -property installationPath },
+        { & $vswhere -latest -products * -requires $cppTools -property installationPath }
+    ) | ForEach-Object { & $_ | Select-Object -First 1 } | Where-Object { $_ } | Select-Object -First 1
+    if (-not $vsInstall) {
+        Write-Host 'Visual Studio instances found by vswhere:'
+        & $vswhere -all -products * -format text | Write-Host
+        throw 'No Visual Studio installation with the C++ tools was found.'
+    }
     Write-Host "Using Visual Studio at $vsInstall"
     & (Join-Path $vsInstall 'Common7\Tools\Launch-VsDevShell.ps1') -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
     Set-Location $repo
