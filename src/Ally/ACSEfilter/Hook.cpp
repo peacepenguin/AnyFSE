@@ -1,7 +1,7 @@
 #include <windows.h>
-
 #include "../../App/Constants.hpp"
 #include "DebugLog.h"
+#include "Config.h"
 #include "HidReadFilter.h"
 #include "IATHook.h"
 #include "Native.h"
@@ -12,111 +12,132 @@ namespace ACSEFilter::Hook
     {
         BOOL WINAPI HookReadFile(HANDLE file, LPVOID buffer, DWORD bytesToRead, LPDWORD bytesRead, LPOVERLAPPED overlapped)
         {
-            BOOL result = Native::ReadFile(file, buffer, bytesToRead, bytesRead, overlapped);
+            // Track before submitting: another thread can observe completion before ReadFile returns.
+            const DWORD incomingError = GetLastError();
+            RememberPendingRead(file, buffer, bytesToRead, overlapped);
+            SetLastError(incomingError);
+            const BOOL result = Native::ReadFile(file, buffer, bytesToRead, bytesRead, overlapped);
             const DWORD lastError = GetLastError();
-
             if (result)
             {
-                const DWORD actualBytes = bytesRead ? *bytesRead : bytesToRead;
-                PatchCompletedRead(file, buffer, actualBytes, bytesToRead);
+                DWORD actualBytes = bytesRead ? *bytesRead : 0;
+                if (!overlapped || ::GetOverlappedResult(file, overlapped, &actualBytes, FALSE))
+                {
+                    if (overlapped) CompletePendingRead(file, overlapped, actualBytes);
+                    else PatchCompletedRead(file, buffer, actualBytes, bytesToRead);
+                }
             }
-            else if (lastError == ERROR_IO_PENDING && overlapped)
-            {
-                RememberPendingRead(file, buffer, bytesToRead, overlapped);
-            }
-
+            else if (lastError != ERROR_IO_PENDING) DropPendingRead(overlapped);
             SetLastError(lastError);
             return result;
         }
 
-        bool FindPendingWaitHandleIndex(
-            DWORD count,
-            const HANDLE *handles,
-            DWORD& pendingWaitHandleIndex)
+        BOOL WINAPI HookGetOverlappedResult(HANDLE file, LPOVERLAPPED overlapped, LPDWORD bytes, BOOL wait)
         {
-            if (!handles)
-            {
-                return false;
-            }
-
-            const HANDLE pendingWaitHandle = PendingReadWaitHandle();
-            if (!pendingWaitHandle)
-            {
-                return false;
-            }
-
-            for (DWORD i = 0; i < count; ++i)
-            {
-                if (handles[i] == pendingWaitHandle)
-                {
-                    pendingWaitHandleIndex = i;
-                    return true;
-                }
-            }
-
-            return false;
+            const BOOL result = ::GetOverlappedResult(file, overlapped, bytes, wait);
+            const DWORD lastError = GetLastError();
+            if (result && bytes) CompletePendingRead(file, overlapped, *bytes);
+            else if (!result && lastError != ERROR_IO_INCOMPLETE) DropPendingRead(overlapped);
+            SetLastError(lastError);
+            return result;
         }
 
-        DWORD WINAPI HookWaitForMultipleObjects(
-            DWORD count,
-            const HANDLE *handles,
-            BOOL waitAll,
-            DWORD milliseconds)
+        BOOL WINAPI HookGetOverlappedResultEx(HANDLE file, LPOVERLAPPED overlapped, LPDWORD bytes, DWORD timeout, BOOL alertable)
+        {
+            const BOOL result = ::GetOverlappedResultEx(file, overlapped, bytes, timeout, alertable);
+            const DWORD lastError = GetLastError();
+            if (result && bytes) CompletePendingRead(file, overlapped, *bytes);
+            else if (!result && lastError != ERROR_IO_INCOMPLETE && lastError != WAIT_TIMEOUT && lastError != WAIT_IO_COMPLETION)
+                DropPendingRead(overlapped);
+            SetLastError(lastError);
+            return result;
+        }
+
+        void CompleteWait(DWORD result, DWORD count, const HANDLE *handles, BOOL waitAll)
+        {
+            if (result < WAIT_OBJECT_0 + count)
+            {
+                if (waitAll) CompletePendingReadsAfterWait(count, handles);
+                else CompletePendingReadsAfterWait(1, handles + (result - WAIT_OBJECT_0));
+            }
+        }
+
+        DWORD WINAPI HookWaitForMultipleObjects(DWORD count, const HANDLE *handles, BOOL waitAll, DWORD milliseconds)
         {
             const DWORD result = Native::WaitForMultipleObjects(count, handles, waitAll, milliseconds);
             const DWORD lastError = GetLastError();
-
-            DWORD pendingWaitHandleIndex = 0;
-            if (!waitAll
-                && FindPendingWaitHandleIndex(count, handles, pendingWaitHandleIndex)
-                && result == WAIT_OBJECT_0 + pendingWaitHandleIndex)
-            {
-                LOG(L"Read data via WaitForMultipleObjects");
-                CompletePendingReadAfterWait();
-            }
-
+            CompleteWait(result, count, handles, waitAll);
             SetLastError(lastError);
             return result;
         }
 
-        const ImportHookSpec *HookSpecs(size_t &count)
+        DWORD WINAPI HookWaitForMultipleObjectsEx(DWORD count, const HANDLE *handles, BOOL waitAll, DWORD milliseconds, BOOL alertable)
         {
-            static const ImportHookSpec specs[] =
-                {
-                    {"ReadFile", reinterpret_cast<void *>(HookReadFile)},
-                    {"WaitForMultipleObjects", reinterpret_cast<void *>(HookWaitForMultipleObjects)},
-                };
-
-            count = ARRAYSIZE(specs);
-            return specs;
+            const DWORD result = ::WaitForMultipleObjectsEx(count, handles, waitAll, milliseconds, alertable);
+            const DWORD lastError = GetLastError();
+            CompleteWait(result, count, handles, waitAll);
+            SetLastError(lastError);
+            return result;
         }
 
-    } // namespace
+        DWORD WINAPI HookWaitForSingleObject(HANDLE handle, DWORD milliseconds)
+        {
+            const DWORD result = ::WaitForSingleObject(handle, milliseconds);
+            const DWORD lastError = GetLastError();
+            if (result == WAIT_OBJECT_0) CompletePendingReadsAfterWait(1, &handle);
+            SetLastError(lastError);
+            return result;
+        }
+
+        DWORD WINAPI HookWaitForSingleObjectEx(HANDLE handle, DWORD milliseconds, BOOL alertable)
+        {
+            const DWORD result = ::WaitForSingleObjectEx(handle, milliseconds, alertable);
+            const DWORD lastError = GetLastError();
+            if (result == WAIT_OBJECT_0) CompletePendingReadsAfterWait(1, &handle);
+            SetLastError(lastError);
+            return result;
+        }
+    }
 
     DWORD WINAPI Install(LPVOID context)
     {
-        const HMODULE selfModule = static_cast<HMODULE>(context);
         if (!Native::ResolveKernelFunctions())
         {
             LOG(L"Failed to resolve required kernel functions.");
             return 1;
         }
-
-        size_t count = 0;
-        const ImportHookSpec *specs = HookSpecs(count);
         const HMODULE targetModule = GetModuleHandleW(Constants::AsusOptimizationProcess);
-        if (!targetModule || targetModule == selfModule)
+        if (!targetModule || targetModule == static_cast<HMODULE>(context))
         {
             LOG(L"Failed to resolve the target executable module.");
             return 1;
         }
-
-        PatchModuleImports(targetModule, specs, count);
-
-        LOG(L"Hooks installed in the target executable module only.");
+        const ImportHookSpec specs[] = {
+            {Config::kReadFile, reinterpret_cast<void *>(HookReadFile)},
+            {Config::kWaitForMultipleObjects, reinterpret_cast<void *>(HookWaitForMultipleObjects)},
+            {Config::kWaitForMultipleObjectsEx, reinterpret_cast<void *>(HookWaitForMultipleObjectsEx)},
+            {Config::kWaitForSingleObject, reinterpret_cast<void *>(HookWaitForSingleObject)},
+            {Config::kWaitForSingleObjectEx, reinterpret_cast<void *>(HookWaitForSingleObjectEx)},
+            {Config::kGetOverlappedResult, reinterpret_cast<void *>(HookGetOverlappedResult)},
+            {Config::kGetOverlappedResultEx, reinterpret_cast<void *>(HookGetOverlappedResultEx)},
+        };
+        size_t reads = 0;
+        size_t completions = 0;
+        for (size_t i = 0; i < ARRAYSIZE(specs); ++i)
+        {
+            const size_t patched = PatchModuleImports(targetModule, &specs[i], 1);
+            LOG(L"Import %S: %zu slots patched", specs[i].functionName, patched);
+            if (i == 0) reads += patched;
+            else completions += patched;
+        }
+        if (!reads || !completions)
+        {
+            LOG(L"Incomplete hook coverage: ReadFile=%zu completion=%zu. ASUS button suppression is not verified.", reads, completions);
+            return 1;
+        }
+        LOG(L"Read and completion imports patched in ASUS executable. Confirm suppression with button-report logs.");
         return 0;
     }
-
 }
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
@@ -124,13 +145,8 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
     if (reason == DLL_PROCESS_ATTACH)
     {
         DisableThreadLibraryCalls(module);
-
         HANDLE thread = CreateThread(nullptr, 0, ACSEFilter::Hook::Install, module, 0, nullptr);
-        if (thread)
-        {
-            CloseHandle(thread);
-        }
+        if (thread) CloseHandle(thread);
     }
-
     return TRUE;
 }

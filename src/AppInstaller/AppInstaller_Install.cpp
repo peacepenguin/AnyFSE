@@ -33,6 +33,7 @@
 #include "Tools/Unicode.hpp"
 #include "Tools/Paths.hpp"
 #include "Tools/Packages.hpp"
+#include "Tools/Elevated.hpp"
 #include "AppInstaller/Certificate.hpp"
 #include "AppInstaller/ScheduledTask.hpp"
 
@@ -124,15 +125,11 @@ namespace AnyFSE
 
             RegisterUninstall();
             ToolsEx::ScheduledTask::RegisterAnyFSETask(Tools::Paths::GetInstallPath());
-            try
-            {
-                ToolsEx::ScheduledTask::RegisterListenerTask(Tools::Paths::GetInstallPath());
-            }
-            catch (const std::exception& e)
-            {
-                // Not fatal: the listener is still started by the app and by the HKCU Run entry
-                log.Warn(e, "Could not register the HID listener logon task; continuing installation");
-            }
+            // Required: logon and demand starts both use this task, so a registration failure must be visible.
+            ToolsEx::ScheduledTask::RegisterListenerTask(Tools::Paths::GetInstallPath());
+            if (Registry::ValueExists(Constants::HidListenerAutorunKey, Constants::HidListenerAutorunValue)
+                && !Registry::DeleteValue(Constants::HidListenerAutorunKey, Constants::HidListenerAutorunValue))
+                log.Warn("Could not remove legacy HID listener Run entry");
 
             if (acseServiceWasRunning)
             {
@@ -150,7 +147,8 @@ namespace AnyFSE
                 CheckSuccess(true);
             }
 
-            Process::StartProtocol(Constants::AnyFseProtocolHidListener);
+            if (!Elevated::StartListenerTask())
+                log.Warn("AnyFSE Listener task could not start after installation; see the task startup error");
 
             ShowCompletePage();
 

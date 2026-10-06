@@ -11,6 +11,9 @@ namespace AnyFSE::Tools::Elevated
     // Synchronous: returns after the scheduled task exits. Concurrent calls are rejected.
     bool Call(const std::wstring &name);
     bool ElevatedStartupApps();
+    // Starts the dedicated, long-lived listener task without waiting for it to exit.
+    // Task Scheduler owns duplicate suppression for logon and on-demand requests.
+    bool StartListenerTask();
 }
 
 namespace Elevated = AnyFSE::Tools::Elevated;

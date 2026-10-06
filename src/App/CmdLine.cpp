@@ -146,7 +146,6 @@ namespace AnyFSE::App::CmdLine
         Elevated::Register(Constants::ElevatedStartupApps, []() { Launchers::LaunchStartupApps(true); });
         Elevated::Register(Constants::ElevatedEnableGamingHandheld, GamingExperience::EnableGamingHandheld);
         Elevated::Register(Constants::ElevatedRestoreGamingPC, GamingExperience::RestoreGamingPC);
-        Elevated::Register(Constants::ElevatedHidListener, []() { Process::StartProcess(Paths::GetExeFileName(), L"/HidListenerJob"); });
 
         result = Elevated::CallHandler() ? 0 : 1;
         return true;
@@ -159,7 +158,9 @@ namespace AnyFSE::App::CmdLine
             return false;
         }
 
-        if (Config::HotkeysEnable || (Config::AllyHidEnable && Ally::IsSupported()))
+        Ally::RemoveLegacyListenerAutorun();
+
+        if (Ally::IsListenerRequired())
         {
             log.Debug("Starting background HID/hotkey listener\n");
             AnyFSE::Logging::LogManager::Initialize("AnyFSE/BackgroundListener", Config::LogLevel, Config::LogPath);
@@ -176,10 +177,9 @@ namespace AnyFSE::App::CmdLine
             return false;
         }
 
-        if (Config::HotkeysEnable || (Config::AllyHidEnable && Ally::IsSupported()))
-        {
-            Elevated::Call(Constants::ElevatedHidListener);
-        }
+        // Compatibility with existing protocol links and old Run entries: delegate to the same task.
+        Ally::RemoveLegacyListenerAutorun();
+        result = (!Ally::IsListenerRequired() || Elevated::StartListenerTask()) ? 0 : 1;
         return true;
     }
 

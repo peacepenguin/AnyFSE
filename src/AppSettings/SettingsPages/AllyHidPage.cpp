@@ -193,7 +193,7 @@ namespace AnyFSE::App::AppSettings::Settings::Page
             Config::AllyHidModeLibraryPress = m_modeLibraryPressCombo.GetCurentValue();
         }
 
-        Ally::EnableACSEInjector(Config::AllyHidEnable);
+        // The elevated listener reconciles the injector after Config::Save and the reload notification.
     }
 
     void AllyHidPage::OpenAllyHidPage()

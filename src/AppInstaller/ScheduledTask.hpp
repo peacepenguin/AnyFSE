@@ -7,8 +7,8 @@ namespace AnyFSE::ToolsEx::ScheduledTask
     void RegisterAnyFSETask(const std::wstring &installPath);
     void DeleteAnyFSETask();
 
-    // Starts the elevated HID/hotkey listener at logon through Task Scheduler, so it does not depend on
-    // Explorer (HKCU\Run) or on the app being launched; it also works when the Xbox full screen experience replaces the shell.
+    // Sole owner of elevated HID/hotkey listener startup, both at logon and on demand.
+    // Runs the listener directly so Task Scheduler can track it and suppress duplicate starts.
     void RegisterListenerTask(const std::wstring &installPath);
     void DeleteListenerTask();
 }

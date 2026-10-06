@@ -76,6 +76,14 @@ Same for cases when AnyFSE executed from gamebar.
 
 In case if ASUS ROG Ally buttons remaping is configured it will start second instance as background app that listen such buttons and execute handlers on keypress.
 
+The `AnyFSE Listener` scheduled task owns background HID/hotkey listener startup.
+It runs the listener directly, elevated in the installing user's interactive session,
+at logon and on demand from the app or settings. Task Scheduler ignores duplicate
+start requests while that task is running. No registry Run entry is created;
+legacy `AnyFSE Hotkeys` Run entries are removed during installation and app startup.
+The listener exits when neither button remapping nor hotkeys is enabled. Its mutex
+remains a fallback for manual invocations and older binaries during upgrades.
+
 ## ASUS ROG Ally buttons
 
 On ASUS ROG Ally devices AnyFSE can redefine the dedicated system buttons:

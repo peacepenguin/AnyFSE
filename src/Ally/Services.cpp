@@ -148,6 +148,16 @@ namespace Ally::Services
         return Start(service.value);
     }
 
+    bool IsInjectorServiceRunning()
+    {
+        ServiceHandle manager(OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT));
+        if (!manager.value) return false;
+        ServiceHandle service(OpenServiceW(manager.value, c::InjectorServiceName, SERVICE_QUERY_STATUS));
+        if (!service.value) return false;
+        SERVICE_STATUS_PROCESS status = {};
+        return QueryStatus(service.value, status) && status.dwCurrentState == SERVICE_RUNNING;
+    }
+
     bool EnableInjectorService()
     {
         const bool result = CreateInjector();

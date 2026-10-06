@@ -31,6 +31,7 @@ namespace Ally::Services
     bool RemoveInjector();
     bool EnableAsusOptimization();
     bool EnableInjectorService();
+    bool IsInjectorServiceRunning();
     bool DisableInjectorService();
     bool EnableAsusOptimizationService();
 };

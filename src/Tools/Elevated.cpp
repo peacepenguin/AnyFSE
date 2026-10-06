@@ -106,6 +106,39 @@ namespace AnyFSE::Tools::Elevated
         return Call(c::ElevatedStartupApps);
     }
 
+    bool StartListenerTask()
+    {
+        try
+        {
+            ComScope com;
+            wrl::ComPtr<ITaskService> service;
+            Check(CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&service)));
+            Check(service->Connect(_variant_t(), _variant_t(), _variant_t(), _variant_t()));
+            wrl::ComPtr<ITaskFolder> folder;
+            Check(service->GetFolder(_bstr_t(c::TaskSchedulerRoot), &folder));
+            wrl::ComPtr<IRegisteredTask> task;
+            Check(folder->GetTask(_bstr_t(c::AnyFseListenerTaskName), &task));
+            VARIANT_BOOL enabled = VARIANT_FALSE;
+            Check(task->get_Enabled(&enabled));
+            if (enabled != VARIANT_TRUE) throw std::runtime_error("AnyFSE Listener task is disabled");
+            TASK_STATE state;
+            Check(task->get_State(&state));
+            if (state == TASK_STATE_RUNNING || state == TASK_STATE_QUEUED) return true;
+
+            DWORD sessionId = 0;
+            if (!ProcessIdToSessionId(GetCurrentProcessId(), &sessionId)) Check(HRESULT_FROM_WIN32(GetLastError()));
+            wrl::ComPtr<IRunningTask> running;
+            // IGNORE_NEW also handles a logon trigger or another demand start racing this call.
+            Check(task->RunEx(_variant_t(), TASK_RUN_USE_SESSION_ID, sessionId, nullptr, &running));
+            return true;
+        }
+        catch (const std::exception &error)
+        {
+            log.Error("Could not start AnyFSE Listener task; repair the installation: %s", error.what());
+            return false;
+        }
+    }
+
     bool Call(const std::wstring &name)
     {
         try

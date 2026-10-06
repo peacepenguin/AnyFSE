@@ -4,6 +4,13 @@
 
 namespace ACSEFilter::Config
 {
+    inline constexpr char kReadFile[] = "ReadFile";
+    inline constexpr char kWaitForMultipleObjects[] = "WaitForMultipleObjects";
+    inline constexpr char kWaitForMultipleObjectsEx[] = "WaitForMultipleObjectsEx";
+    inline constexpr char kWaitForSingleObject[] = "WaitForSingleObject";
+    inline constexpr char kWaitForSingleObjectEx[] = "WaitForSingleObjectEx";
+    inline constexpr char kGetOverlappedResult[] = "GetOverlappedResult";
+    inline constexpr char kGetOverlappedResultEx[] = "GetOverlappedResultEx";
 
     // ASUS USB vendor ID.
     inline constexpr USHORT kTargetVendorId = 0x0B05;

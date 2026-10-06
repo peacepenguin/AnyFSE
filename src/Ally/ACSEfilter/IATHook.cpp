@@ -41,18 +41,18 @@ namespace ACSEFilter
             return nullptr;
         }
 
-        void PatchThunk(IMAGE_THUNK_DATA *thunk, void *hookFunction)
+        bool PatchThunk(IMAGE_THUNK_DATA *thunk, void *hookFunction)
         {
             auto *slot = reinterpret_cast<void **>(&thunk->u1.Function);
             if (*slot == hookFunction)
             {
-                return;
+                return true;
             }
 
             DWORD oldProtect = 0;
             if (!VirtualProtect(slot, sizeof(void *), PAGE_READWRITE, &oldProtect))
             {
-                return;
+                return false;
             }
 
             *slot = hookFunction;
@@ -60,13 +60,14 @@ namespace ACSEFilter
             DWORD ignored = 0;
             VirtualProtect(slot, sizeof(void *), oldProtect, &ignored);
             FlushInstructionCache(GetCurrentProcess(), slot, sizeof(void *));
+            return true;
         }
 
-        void PatchModuleImportsImpl(HMODULE module, const ImportHookSpec *hooks, size_t hookCount)
+        size_t PatchModuleImportsImpl(HMODULE module, const ImportHookSpec *hooks, size_t hookCount)
         {
             if (!IsReadablePeImage(module))
             {
-                return;
+                return 0;
             }
 
             const auto *base = reinterpret_cast<const BYTE *>(module);
@@ -76,10 +77,11 @@ namespace ACSEFilter
 
             if (!directory.VirtualAddress || !directory.Size)
             {
-                return;
+                return 0;
             }
 
             auto *import = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR *>(const_cast<BYTE *>(base) + directory.VirtualAddress);
+            size_t patched = 0;
 
             for (; import->Name; ++import)
             {
@@ -104,17 +106,18 @@ namespace ACSEFilter
                     const ImportHookSpec *hook = FindHook(reinterpret_cast<const char *>(importByName->Name), hooks, hookCount);
                     if (hook)
                     {
-                        PatchThunk(&thunk[index], hook->hookFunction);
+                        if (PatchThunk(&thunk[index], hook->hookFunction)) ++patched;
                     }
                 }
             }
+            return patched;
         }
 
     } // namespace
 
-    void PatchModuleImports(HMODULE module, const ImportHookSpec *hooks, size_t hookCount)
+    size_t PatchModuleImports(HMODULE module, const ImportHookSpec *hooks, size_t hookCount)
     {
-        PatchModuleImportsImpl(module, hooks, hookCount);
+        return PatchModuleImportsImpl(module, hooks, hookCount);
     }
 
 } // namespace ACSEFilter

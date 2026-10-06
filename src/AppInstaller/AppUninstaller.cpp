@@ -538,6 +538,7 @@ namespace AnyFSE
     {
         ToolsEx::ScheduledTask::DeleteAnyFSETask();
         ToolsEx::ScheduledTask::DeleteListenerTask();
+        Registry::DeleteValue(App::Constants::HidListenerAutorunKey, App::Constants::HidListenerAutorunValue);
         Ally::Services::DisableInjectorService();
 
         TerminateAnyFSE();

@@ -813,11 +813,7 @@ namespace AnyFSE::App::AppSettings::Settings
 
         Config::Save();
 
-        Ally::UpdateListenerAutorun();
-        if (!Ally::UpdateHidListener() && Ally::CheckListener())
-        {
-            Process::StartProtocol(Constants::AnyFseProtocolHidListener);
-        }
+        if (!Ally::UpdateHidListener()) Ally::EnsureListener();
     }
 
     void SettingsDialog::OpenSettingsPage()

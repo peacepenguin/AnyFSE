@@ -210,6 +210,19 @@ namespace AnyFSE::ToolsEx::ScheduledTask
 
     void DeleteListenerTask()
     {
+        // Stop the tracked listener before removing its registration. Otherwise its reconciliation
+        // timer could recreate the injector service while the uninstaller is removing it.
+        ComScope com;
+        auto service = Connect();
+        wrl::ComPtr<ITaskFolder> folder;
+        Check(service->GetFolder(_bstr_t(c::TaskSchedulerRoot), &folder));
+        wrl::ComPtr<IRegisteredTask> task;
+        const HRESULT found = folder->GetTask(_bstr_t(c::AnyFseListenerTaskName), &task);
+        if (found == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) return;
+        Check(found);
+        const HRESULT stopped = task->Stop(0);
+        if (stopped == S_FALSE) throw std::runtime_error("Could not stop AnyFSE Listener task");
+        Check(stopped);
         DeleteTaskByName(c::AnyFseListenerTaskName);
     }
 }

@@ -54,9 +54,7 @@ namespace Ally
     bool EnsureListener();
     bool CheckListener();
     bool IsListenerRequired();
-    void UpdateListenerAutorun();
-    bool SetupListener();
-    bool WaitListener();
+    void RemoveLegacyListenerAutorun();
 
     RogAllyVersion GetRogAllyVersion();
     bool IsXBoxRogAlly();

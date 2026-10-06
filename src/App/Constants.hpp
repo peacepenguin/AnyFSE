@@ -23,7 +23,6 @@ namespace AnyFSE::App::Constants
     inline constexpr wchar_t ElevatedStartupApps[] = L"StartupApps";
     inline constexpr wchar_t ElevatedEnableGamingHandheld[] = L"EnableGamingHandheld";
     inline constexpr wchar_t ElevatedRestoreGamingPC[] = L"RestoreGamingPC";
-    inline constexpr wchar_t ElevatedHidListener[] = L"ElevatedHidListener";
 
     inline constexpr wchar_t AnyFseTaskArgument[] = L"/task";
     inline constexpr char AnyFseTaskArgumentA[] = "/task";
@@ -76,7 +75,7 @@ namespace AnyFSE::App::Constants
     inline constexpr wchar_t UpdaterCommandMessage[] = L"AnyFSE.Updater.Command";
     inline constexpr wchar_t AnyFseProtocolSettings[] = L"anyfse://settings";
     inline constexpr wchar_t ProtocolSeparator[] = L"://";
-    inline constexpr wchar_t AnyFseProtocolHidListener[] = L"anyfse://HidListener";
+    // Migration-only identifiers: no new HKCU Run entry is written.
     inline constexpr wchar_t HidListenerAutorunKey[] = L"HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
     inline constexpr wchar_t HidListenerAutorunValue[] = L"AnyFSE Hotkeys";
     inline constexpr wchar_t MainWindowClass[] = L"AnyFSE";
