@@ -53,6 +53,8 @@ namespace Ally
 
     bool EnsureListener();
     bool CheckListener();
+    bool IsListenerRequired();
+    void UpdateListenerAutorun();
     bool SetupListener();
     bool WaitListener();
 
