@@ -221,13 +221,22 @@ namespace AnyFSE::Tools::XboxStartup
                 }() + ": expected [" + DumpPattern(original) + "] or the patched replacement, found [" + Dump(image, off, original.size()) + "]");
             return {off, replacement, State::Original};
         }
-        Site ResolveExport(const Pe& pe, const Bytes& image, const char *name, const std::vector<int>& original, const Bytes& replacement)
+        Site ResolveExport(const Pe& pe, const Bytes& image, const char *name, const std::vector<int>& original, const Bytes& replacement,
+            const std::vector<int>& alternative = {})
         {
             auto off = pe.Export(name);
             // Preserve ENDBR64 if a newer toolchain emits an indirect-branch landing pad.
             if (Match(image, off, {0xF3, 0x0F, 0x1E, 0xFA})) off += 4;
             Require(pe.IsCode(off, replacement.size()), "Export patch crosses executable section boundary");
+            if (!alternative.empty() && pe.IsCode(off, alternative.size()) && Match(image, off, alternative))
+                return Resolve(image, off, alternative, replacement);
             return Resolve(image, off, original, replacement);
+        }
+        std::int64_t RelativeDestination(const Pe& pe, std::size_t instruction, std::size_t displacementOffset, std::size_t length)
+        {
+            const auto relative = pe.U32(instruction + displacementOffset);
+            const auto displacement = std::int64_t(relative) - ((relative & 0x80000000u) ? (std::int64_t{1} << 32) : 0);
+            return std::int64_t(pe.Rva(instruction)) + static_cast<std::int64_t>(length) + displacement;
         }
         void Checksum(Bytes& image, std::size_t offset)
         {
@@ -251,29 +260,43 @@ namespace AnyFSE::Tools::XboxStartup
         if (target == Target::GameMode)
         {
             const Bytes stub{0xB8, 1, 0, 0, 0, 0xC3};
-            sites.push_back(ResolveExport(pe, image, c::XboxStartupSupportedExport, {0x48, 0x89, 0x5C, 0x24, 8, 0x48}, stub));
+            // 26100.9278 uses a small stack frame and RIP-relative feature-state lookup at this named BOOL export.
+            sites.push_back(ResolveExport(pe, image, c::XboxStartupSupportedExport, {0x48, 0x89, 0x5C, 0x24, 8, 0x48}, stub,
+                {0x48, 0x83, 0xEC, 0x28, 0x48, 0x8D, 0x0D, -1, -1, -1, -1, 0xE8, -1, -1, -1, -1, 0x84, 0xC0, 0x74, -1}));
             sites.push_back(ResolveExport(pe, image, c::XboxStartupCanSetExport, {0x48, 0x89, 0x5C, 0x24, 0x20, 0x57}, stub));
             const auto setter = pe.Export(c::XboxStartupSetExport);
             const auto functionEnd = pe.FunctionEnd(setter);
             const auto scanEnd = (std::min)(functionEnd, setter + 0x80);
+            const auto supportedRva = pe.Rva(pe.Export(c::XboxStartupSupportedExport));
+            std::vector<Site> supportGates;
             for (std::size_t i = setter; i + 8 <= scanEnd; ++i)
             {
-                if (!pe.IsCode(i, 8) || !Match(image, i, {0x84, 0xC0})) continue;
+                const bool byteTest = Match(image, i, {0x84, 0xC0});
+                const bool boolTest = Match(image, i, {0x85, 0xC0});
+                if (!pe.IsCode(i, 8) || (!byteTest && !boolTest)) continue;
+                // BOOL is tested as EAX in the alternate layout. Bind it to the named support export,
+                // not an arbitrary HRESULT/boolean test elsewhere in the setter.
+                if (boolTest && (i < setter + 5 || image[i - 5] != 0xE8
+                    || RelativeDestination(pe, i - 5, 1, 5) != supportedRva)) continue;
                 const bool original = Match(image, i + 2, {0x0F, 0x84, -1, -1, -1, -1});
                 if (original)
                 {
-                    const auto relative = pe.U32(i + 4);
-                    const auto displacement = std::int64_t(relative) - ((relative & 0x80000000u) ? (std::int64_t{1} << 32) : 0);
-                    const auto destination = std::int64_t(pe.Rva(i)) + 8 + displacement;
+                    const auto destination = RelativeDestination(pe, i + 2, 2, 6);
                     Require(destination >= 0 && destination <= (std::numeric_limits<std::uint32_t>::max)(), "Invalid branch destination RVA");
                     // Cold blocks and shared epilogues may have separate RUNTIME_FUNCTION entries.
-                    Require(pe.IsCode(pe.Offset(static_cast<std::uint32_t>(destination)), 1), "Home-app branch targets nonexecutable data");
+                    Require(pe.IsCode(pe.Offset(static_cast<std::uint32_t>(destination)), 1), "Gaming setter branch targets nonexecutable data");
                 }
                 if (original || Match(image, i + 2, {0x90, 0x90, 0x90, 0x90, 0x90, 0x90}))
-                    sites.push_back(Resolve(image, i + 2, {0x0F, 0x84, -1, -1, -1, -1}, Bytes(6, 0x90)));
+                {
+                    auto& candidates = boolTest ? supportGates : sites;
+                    candidates.push_back(Resolve(image, i + 2, {0x0F, 0x84, -1, -1, -1, -1}, Bytes(6, 0x90)));
+                }
             }
+            // Preserve the original home-app patch when present. Only use the verified support gate
+            // for layouts without it, keeping detection/restoration of previously patched DLLs stable.
+            if (sites.size() == 2) sites.insert(sites.end(), supportGates.begin(), supportGates.end());
             if (sites.size() != 3)
-                throw std::runtime_error("Missing or ambiguous home-app branch: found " + std::to_string(sites.size()) + " of 3 expected sites");
+                throw std::runtime_error("Missing or ambiguous gaming setter branch: found " + std::to_string(sites.size()) + " of 3 expected sites");
         }
         else
         {

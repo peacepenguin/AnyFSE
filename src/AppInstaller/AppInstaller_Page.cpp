@@ -212,6 +212,7 @@ namespace AnyFSE
         // An unsupported build skips the prompt entirely instead of offering an Enable button that can only fail.
         if (!desktop.canApply)
         {
+            log.Warn("Desktop Xbox startup patch not offered: %ls", desktop.details.c_str());
             OnInstall();
             return;
         }

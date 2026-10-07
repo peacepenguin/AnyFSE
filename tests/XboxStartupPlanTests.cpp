@@ -161,6 +161,34 @@ int main(int argc, char **argv)
             Check(patchedPads[off + 4] == 0xB8 && patchedPads[off + 9] == 0xC3, "Patch after ENDBR64");
         }
         Check(x::PatchImage(x::Target::GameMode, patchedPads) == patchedPads, "Landing pad patch idempotence");
+        auto boolGate = game;
+        Put(boolGate, 0x220, {0x48, 0x83, 0xEC, 0x28, 0x48, 0x8D, 0x0D, 0, 0, 0, 0,
+            0xE8, 0, 0, 0, 0, 0x84, 0xC0, 0x74, 0x2B});
+        Put(boolGate, 0x28B, {0xE8, 0x90, 0xFF, 0xFF, 0xFF, 0x85, 0xC0});
+        const auto boolPlan = x::BuildPlan(x::Target::GameMode, boolGate);
+        Check(boolPlan.size() == 3 && boolPlan[2].offset == 0x292, "Recognize support-export BOOL gate");
+        const auto patchedBool = x::PatchImage(x::Target::GameMode, boolGate);
+        Check(patchedBool[0x220] == 0xB8 && patchedBool[0x292] == 0x90, "Patch alternate prologue and BOOL gate");
+        Check(x::PatchImage(x::Target::GameMode, patchedBool) == patchedBool, "Alternate layout patch is idempotent");
+        const auto patchedBoolPlan = x::BuildPlan(x::Target::GameMode, patchedBool);
+        Check(std::all_of(patchedBoolPlan.begin(), patchedBoolPlan.end(), [](const x::Site& s) { return s.state == x::State::Patched; }),
+            "Detect alternate layout as fully patched");
+        auto wrongCall = boolGate;
+        Put32(wrongCall, 0x28C, 0);
+        Reject([&] { x::BuildPlan(x::Target::GameMode, wrongCall); }, "Reject BOOL test of unrelated call");
+        wrongCall = boolGate;
+        wrongCall[0x28B] = 0x90;
+        Reject([&] { x::BuildPlan(x::Target::GameMode, wrongCall); }, "Reject BOOL test without direct call");
+        auto unknownSmallFrame = boolGate;
+        unknownSmallFrame[0x22B] = 0xCC;
+        Reject([&] { x::BuildPlan(x::Target::GameMode, unknownSmallFrame); }, "Do not accept arbitrary small-stack prologues");
+        auto ambiguousBool = boolGate;
+        Put(ambiguousBool, 0x2AB, {0xE8, 0x70, 0xFF, 0xFF, 0xFF, 0x85, 0xC0, 0x0F, 0x84, 0, 0, 0, 0});
+        Reject([&] { x::BuildPlan(x::Target::GameMode, ambiguousBool); }, "Reject multiple support-export gates");
+        auto bothGates = game;
+        Put(bothGates, 0x2AB, {0xE8, 0x70, 0xFF, 0xFF, 0xFF, 0x85, 0xC0, 0x0F, 0x84, 0, 0, 0, 0});
+        Check(x::BuildPlan(x::Target::GameMode, bothGates)[2].offset == 0x292, "Prefer existing home-app gate when both exist");
+        Check(x::PatchImage(x::Target::GameMode, bothGates)[0x2B2] == 0x0F, "Leave support gate intact in legacy layout");
         auto neighbor = game;
         Put32(neighbor, 0xB04, 0x1090);
         Reject([&] { x::BuildPlan(x::Target::GameMode, neighbor); }, "Never patch a neighboring function's branch");

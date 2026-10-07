@@ -76,6 +76,11 @@ as the compiler keeps emitting the same instructions. `-1`/`??` below means
    unconditionally reports the feature as supported, ignoring whatever logic
    followed.
 
+   The `26100.9278` variant starts with `48 83 EC 28 48 8D 0D ... E8 ...
+   84 C0 74 ...` (a small stack frame, RIP-relative feature-state address, call,
+   and byte-result test). That complete 20-byte prefix is recognized as an
+   alternative at the same named export; the replacement remains six bytes.
+
 2. **`CanSetGamingFullScreenExperience` prologue.**
    Original: `48 89 5C 24 20 57` → `mov [rsp+20h], rbx` ; `push rdi`.
    Patched: same `B8 01 00 00 00 C3` stub — unconditionally reports the
@@ -101,6 +106,15 @@ as the compiler keeps emitting the same instructions. `-1`/`??` below means
    share the setter's function-table entry.
    Missing, malformed, or overlapping function metadata is refused. The scan
    does not expand into neighboring functions when compiler output changes.
+
+   When no legacy `test al, al` gate exists, the engine also recognizes
+   `call IsGamingFullScreenExperienceSupported; test eax, eax; je rel32`.
+   The direct call's decoded relative target must be the named support export.
+   This is the BOOL support gate present in the inspected `26100.9278` setter,
+   not a home-app gate. Only that jump is NOP'd; the setter body remains intact.
+   Unrelated HRESULT/BOOL checks are ignored. Multiple matching candidates are
+   rejected. If both forms occur, the legacy home-app gate takes precedence so
+   previous patch detection and backup restoration keep producing the same bytes.
 
 **`SettingsHandlers_Gaming.dll` and `twinui.pcshell.dll` —
 resolved via `Target::Settings` / `Target::Shell`, same pattern, scanned
@@ -220,14 +234,13 @@ rejected. Function bounds follow Microsoft's
 These checks improve refusal behavior; they do not establish the semantics of a
 future Windows implementation or replace testing on a disposable machine.
 
-A read-only inspection of local DLLs at version **10.0.26100.9278** found one
-recognized Settings check and one shell check; both are accepted. The local
-`gamemode.dll` has an unrecognized support-export prologue and lacks the expected
-`test al, al` setter gate. Those particular bytes remain unrecognized by both
-this engine and the pinned upstream signatures. This is a finding about the
-inspected files, not proof that the Windows release cannot support the feature.
-A successful installation on the same OS version should be compared using the
-actual DLLs, patcher revision, and backup files.
+A read-only inspection of local DLLs at version **10.0.26100.9278** now recognizes
+three gaming API sites, one Settings check and one shell check. All three pass
+apply/detect/reapply in memory. The gaming sites are at file offsets `0x10F30`,
+`0x10A30`, and `0x11188` in the inspected file (offsets are still resolved dynamically).
+The alternate prologue and BOOL support gate above account for the difference
+from the upstream sample layout. This verifies patch planning and idempotence,
+not post-reboot behavior; the actual system files were not modified by the probe.
 
 All three images are validated before replacement. Original bytes are backed up
 under `%ProgramData%\AnyFSE-XboxStartupBackups`, keyed by the SHA-256 of the full
@@ -256,7 +269,9 @@ idempotence, preserving unrelated image bytes, ignoring patterns in data section
 and refusal of truncated, ambiguous, forwarded-export, wrong-machine and missing
 check fixtures. It also checks variable check counts, landing-pad preservation and idempotence,
 function-boundary enforcement, branch destinations, and malformed section/directory
-metadata. The dev-build CI runs this suite. The suite never writes Windows system files.
+metadata. Alternate-layout checks cover the support-function prefix, exact direct-call
+target, absent/ambiguous calls, patched-state detection, and legacy-gate precedence.
+The dev-build CI runs this suite. The suite never writes Windows system files.
 
 After compiling the tests, the same executable can inspect three real DLLs
 without modifying them. In PowerShell:
