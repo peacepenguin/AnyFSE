@@ -78,6 +78,23 @@ namespace AnyFSE::Tools::XboxStartup
             Privilege(const Privilege&) = delete;
             Privilege& operator=(const Privilege&) = delete;
         };
+        // RtlGetVersion bypasses the GetVersionEx app-compat shim, which lies about the build on manifested apps.
+        // Diagnostic only: included in status/error text so an unlisted build is obvious instead of a bare "unsupported layout".
+        std::wstring WindowsBuildString()
+        {
+            using RtlGetVersionFn = LONG (NTAPI *)(OSVERSIONINFOEXW *);
+            const auto ntdll = GetModuleHandleW(L"ntdll.dll");
+            const auto rtlGetVersion = ntdll ? reinterpret_cast<RtlGetVersionFn>(GetProcAddress(ntdll, "RtlGetVersion")) : nullptr;
+            OSVERSIONINFOEXW info{};
+            info.dwOSVersionInfoSize = sizeof(info);
+            if (!rtlGetVersion || rtlGetVersion(&info) != 0) return L"unknown";
+            DWORD updateBuildRevision = 0, size = sizeof(updateBuildRevision);
+            RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", L"UBR",
+                RRF_RT_REG_DWORD, nullptr, &updateBuildRevision, &size);
+            wchar_t text[64] = {};
+            swprintf_s(text, L"%u.%u.%u.%u", info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber, updateBuildRevision);
+            return text;
+        }
         fs::path SystemDirectory()
         {
             wchar_t path[MAX_PATH] = {};
@@ -355,7 +372,8 @@ namespace AnyFSE::Tools::XboxStartup
                 }
                 catch (const std::exception& error)
                 {
-                    throw std::runtime_error(Unicode::to_string(spec.name) + ": " + error.what());
+                    throw std::runtime_error(Unicode::to_string(spec.name) + " (Windows " + Unicode::to_string(WindowsBuildString())
+                        + "): " + error.what());
                 }
             }
             PrepareBackups(backups);
@@ -432,6 +450,7 @@ namespace AnyFSE::Tools::XboxStartup
     Status Inspect()
     {
         Status status;
+        status.details = L"Windows " + WindowsBuildString() + L"\n";
         try
         {
             const auto directory = SystemDirectory(), backups = BackupDirectory();
@@ -466,7 +485,7 @@ namespace AnyFSE::Tools::XboxStartup
         catch (const std::exception& error)
         {
             status.allPatched = status.canApply = status.canRestore = false;
-            status.details = Unicode::to_wstring(error.what());
+            status.details += Unicode::to_wstring(error.what());
         }
         if (IsHandheldDevice())
         {

@@ -2,6 +2,7 @@
 // See THIRD_PARTY_NOTICES/XboxStartupEnabler.txt.
 #include "XboxStartupPlan.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -121,17 +122,48 @@ namespace AnyFSE::Tools::XboxStartup
                 if (pattern[i] >= 0 && bytes[off + i] != pattern[i]) return false;
             return true;
         }
+        // Hex-dumps the bytes actually present at `off`, "??" past the end of the image. Diagnostic only: this is what makes a
+        // refusal on an unlisted Windows build actionable (add the printed bytes as a new accepted pattern) instead of a dead end.
+        std::string Dump(const Bytes& bytes, std::size_t off, std::size_t length)
+        {
+            static const char *hex = "0123456789abcdef";
+            std::string result;
+            for (std::size_t i = 0; i < length; ++i)
+            {
+                if (i) result += ' ';
+                if (off + i < bytes.size()) { const auto b = bytes[off + i]; result += hex[b >> 4]; result += hex[b & 15]; }
+                else result += "??";
+            }
+            return result;
+        }
+        std::string DumpPattern(const std::vector<int>& pattern)
+        {
+            static const char *hex = "0123456789abcdef";
+            std::string result;
+            for (std::size_t i = 0; i < pattern.size(); ++i)
+            {
+                if (i) result += ' ';
+                if (pattern[i] < 0) result += "??";
+                else { result += hex[(pattern[i] >> 4) & 15]; result += hex[pattern[i] & 15]; }
+            }
+            return result;
+        }
         Site Resolve(const Bytes& image, std::size_t off, const std::vector<int>& original, const Bytes& replacement)
         {
             if (off <= image.size() && replacement.size() <= image.size() - off
                 && std::equal(replacement.begin(), replacement.end(), image.begin() + off))
                 return {off, replacement, State::Patched};
-            Require(Match(image, off, original), "Patch bytes do not match a supported layout");
+            if (!Match(image, off, original))
+                throw std::runtime_error("Patch bytes do not match a supported layout at +0x" + [&] {
+                    char hexOffset[2 * sizeof(std::size_t) + 1] = {};
+                    std::snprintf(hexOffset, sizeof(hexOffset), "%zx", off);
+                    return std::string(hexOffset);
+                }() + ": expected [" + DumpPattern(original) + "] or the patched replacement, found [" + Dump(image, off, original.size()) + "]");
             return {off, replacement, State::Original};
         }
         void Checksum(Bytes& image, std::size_t offset)
         {
-            std::fill_n(image.begin() + offset, 4, 0);
+            std::fill_n(image.begin() + offset, 4, std::uint8_t{0});
             std::uint32_t sum = 0;
             for (std::size_t i = 0; i < image.size(); i += 2)
             {
@@ -160,7 +192,8 @@ namespace AnyFSE::Tools::XboxStartup
                 if (Match(image, i + 2, {0x0F, 0x84, -1, -1, -1, -1}) || Match(image, i + 2, {0x90, 0x90, 0x90, 0x90, 0x90, 0x90}))
                     sites.push_back(Resolve(image, i + 2, {0x0F, 0x84, -1, -1, -1, -1}, Bytes(6, 0x90)));
             }
-            Require(sites.size() == 3, "Missing or ambiguous home-app branch");
+            if (sites.size() != 3)
+                throw std::runtime_error("Missing or ambiguous home-app branch: found " + std::to_string(sites.size()) + " of 3 expected sites");
         }
         else
         {
@@ -178,7 +211,10 @@ namespace AnyFSE::Tools::XboxStartup
                     off += 7;
                 }
             // Documented six-site layout: three gaming, two Settings, one shell check.
-            Require(sites.size() == (target == Target::Settings ? 2u : 1u), "Unsupported or ambiguous handheld-check count");
+            const auto expected = target == Target::Settings ? 2u : 1u;
+            if (sites.size() != expected)
+                throw std::runtime_error("Unsupported or ambiguous handheld-check count: found " + std::to_string(sites.size())
+                    + " of " + std::to_string(expected) + " expected sites");
         }
         return sites;
     }
