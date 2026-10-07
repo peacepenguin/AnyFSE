@@ -20,6 +20,10 @@
 .PARAMETER Lto
     Build with whole program optimization (-p:Lto=true). Slower to build; used by the release workflow.
 
+.PARAMETER Revision
+    Fixed build revision (the fourth version number). CI passes this so builds are reproducible and Package no longer relies on the
+    revision bumped in AnyFSE.Version.props. Omit it locally to keep the auto-increment behaviour.
+
 .PARAMETER Install
     Launch the freshly built offline installer elevated and wait for it to finish.
 
@@ -32,6 +36,7 @@ param(
     [string] $Configuration = 'Release',
     [switch] $Install,
     [switch] $Lto,
+    [Nullable[int]] $Revision = $null,
     [switch] $AllowUpdates
 )
 
@@ -120,6 +125,13 @@ if ($PSVersionTable.PSEdition -eq 'Core') {
 
 # --- Build (same steps as .vscode\tasks.json) ----------------------------------------------------------------------
 $common = @("-property:Configuration=$Configuration", '-property:Platform=x64', '-maxcpucount') + $overrides
+# Package stamps the appx with VersionRevision and then bumps it, and the installer uses VersionRevision - 1 to name itself after
+# that package, so with a fixed revision R the installer must be built with R + 1.
+$installerRevision = @()
+if ($null -ne $Revision) {
+    $common += "-property:VersionRevision=$Revision"
+    $installerRevision = @("-property:VersionRevision=$($Revision + 1)")
+}
 $sln = Join-Path $repo 'AnyFSE.sln'
 
 Invoke-Step "Build AnyFSE $Configuration" {
@@ -132,7 +144,7 @@ Invoke-Step "Package $Configuration" {
     msbuild.exe $sln @common '-target:AnyFSE_Package'
 }
 Invoke-Step "Build AnyFSE.Installer Offline $Configuration" {
-    msbuild.exe (Join-Path $repo 'AnyFSE.Installer.vcxproj') @common '-property:Offline=Offline'
+    msbuild.exe (Join-Path $repo 'AnyFSE.Installer.vcxproj') @common '-property:Offline=Offline' @installerRevision
 }
 
 $installer = Get-ChildItem (Join-Path $repo "build\$Configuration") -Filter 'AnyFSE.Installer.Offline.*.exe' |

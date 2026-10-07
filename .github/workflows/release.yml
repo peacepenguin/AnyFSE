@@ -2,7 +2,7 @@ name: Release
 
 # Push a tag named v<AssemblyVersion> (e.g. v1.0.0, matching AnyFSE.Version.props) to build with -p:Lto=true and publish a GitHub release.
 # A tag that does not match the version in AnyFSE.Version.props fails the run before anything is built.
-# Binaries are signed with a throwaway self-signed certificate (scripts/Build-Dev.ps1), the same as the dev build.
+# Releases always build revision 0 (version <AssemblyVersion>-0). Binaries are signed with a throwaway self-signed certificate (scripts/Build-Dev.ps1), the same as the dev build.
 
 on:
   push:
@@ -39,7 +39,7 @@ jobs:
 
       - name: Build offline installer (LTO)
         shell: pwsh
-        run: ./scripts/Build-Dev.ps1 -Configuration Release -Lto -AllowUpdates
+        run: ./scripts/Build-Dev.ps1 -Configuration Release -Lto -AllowUpdates -Revision 0
 
       - name: Collect installer
         shell: pwsh

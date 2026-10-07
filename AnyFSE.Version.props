@@ -2,7 +2,7 @@
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <AssemblyVersion>1.0.0</AssemblyVersion>
-    <VersionRevision>30</VersionRevision>
+    <VersionRevision>0</VersionRevision>
     <BinaryVersionRevision>$(VersionRevision)</BinaryVersionRevision>
     <AssemblyProduct>AnyFSE</AssemblyProduct>
     <AssemblyCompany>Artem Shpynov</AssemblyCompany>

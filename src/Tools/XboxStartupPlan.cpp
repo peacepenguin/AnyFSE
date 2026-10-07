@@ -145,7 +145,7 @@ namespace AnyFSE::Tools::XboxStartup
     }
     std::vector<Site> BuildPlan(Target target, const Bytes& image)
     {
-        Require(image.size() <= std::numeric_limits<std::uint32_t>::max(), "Oversized PE image");
+        Require(image.size() <= (std::numeric_limits<std::uint32_t>::max)(), "Oversized PE image");
         const Pe pe(image);
         std::vector<Site> sites;
         if (target == Target::GameMode)

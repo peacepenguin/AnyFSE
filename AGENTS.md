@@ -7,6 +7,8 @@
   configuration, platform, or targets.
 - On Windows, run build tasks through the shell defined by `windows.options.shell.executable`. Prepend the values from
   `windows.options.shell.args` to the selected task command so that the Visual Studio developer environment is activated first.
+  The args call `scripts/VsDevEnv.cmd`, which finds the newest Visual Studio with `vswhere`; replace `${workspaceFolder}` with the repository root.
+  Never hardcode a Visual Studio path or version; if the environment must be set up some other way, locate it with `vswhere -latest`.
 - Choose the task whose `label` matches the required artifact and configuration. Use its `command` and `args` without changing their meaning.
 - Run every task listed in `dependsOn` before the selected task, preserving the dependency order and using each referenced task's own `command` and `args`.
 - Run build commands from the repository root unless the selected task explicitly specifies another working directory.

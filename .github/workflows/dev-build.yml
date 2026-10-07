@@ -2,7 +2,7 @@ name: Dev build
 
 # Builds a test installer signed with a throwaway self-signed certificate (see scripts/Build-Dev.ps1).
 # The installer bundles its own public certificate, so it installs on a real device without extra trust steps.
-# Not for release: every run generates a new certificate.
+# Not for release: every run generates a new certificate. The revision is the workflow run number, so builds are reproducible.
 
 on:
   workflow_dispatch:
@@ -39,7 +39,7 @@ jobs:
           $log = Join-Path $env:RUNNER_TEMP 'build.log'
           $failed = $false
           try {
-            ./scripts/Build-Dev.ps1 -Configuration Release *>&1 | Tee-Object -FilePath $log
+            ./scripts/Build-Dev.ps1 -Configuration Release -Revision ${{ github.run_number }} *>&1 | Tee-Object -FilePath $log
           } catch {
             $failed = $true
             ($_ | Out-String) | Tee-Object -FilePath $log -Append
