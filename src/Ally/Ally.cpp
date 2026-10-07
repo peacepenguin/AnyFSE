@@ -298,6 +298,8 @@ namespace Ally
 
         allyEnabled = enableAlly;
         ReconcileInjectorService();
+        log.Info("Listener raw input ready=%d device=%p window=%p FSE=%d",
+            allyEnabled, hDevice, hwnd, GamingExperience::IsFullscreenMode());
         bool hotkeysRegistered = UpdateHotkeys(hwnd);
         if (!Config::AllyHidEnable && !hotkeysRegistered)
         {
@@ -307,6 +309,10 @@ namespace Ally
 
     DWORD WINAPI HIDListener(LPVOID lpParam)
     {
+        DWORD session = 0;
+        ProcessIdToSessionId(GetCurrentProcessId(), &session);
+        log.Info("Listener started: pid=%lu session=%lu FSE=%d AllyHid=%d hotkeys=%d",
+            GetCurrentProcessId(), session, GamingExperience::IsFullscreenMode(), Config::AllyHidEnable, Config::HotkeysEnable);
         bool allyEnabled = Config::AllyHidEnable && Ally::IsSupported();
         if (!Config::AllyHidEnable && !Config::HotkeysEnable)
         {
@@ -317,6 +323,7 @@ namespace Ally
 
         if (FindWindow(HidListenerClass,NULL) != NULL)
         {
+            log.Info("Listener startup skipped: sink window already exists");
             return -1;
         }
 
@@ -350,6 +357,7 @@ namespace Ally
         HWND hwnd = CreateWindow(HidListenerClass, NULL, 0, 0, 0, 0, 0, NULL, NULL, GetModuleHandle(NULL), NULL);
         if (!hwnd)
         {
+            log.Error(log.APIError(), "Listener window creation failed");
             return -1;
         }
 
@@ -373,6 +381,8 @@ namespace Ally
         }
         else allyEnabled = false;
 
+        log.Info("Listener raw input ready=%d device=%p window=%p FSE=%d",
+            allyEnabled, hDevice, hwnd, GamingExperience::IsFullscreenMode());
         bool hotkeysRegistered = UpdateHotkeys(hwnd);
         if (!Config::AllyHidEnable && !hotkeysRegistered)
         {

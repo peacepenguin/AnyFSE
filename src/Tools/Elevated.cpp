@@ -123,13 +123,18 @@ namespace AnyFSE::Tools::Elevated
             if (enabled != VARIANT_TRUE) throw std::runtime_error("AnyFSE Listener task is disabled");
             TASK_STATE state;
             Check(task->get_State(&state));
-            if (state == TASK_STATE_RUNNING || state == TASK_STATE_QUEUED) return true;
+            if (state == TASK_STATE_RUNNING || state == TASK_STATE_QUEUED)
+            {
+                log.Info("Listener task already active: state=%d (queued is not input-ready)", static_cast<int>(state));
+                return true;
+            }
 
             DWORD sessionId = 0;
             if (!ProcessIdToSessionId(GetCurrentProcessId(), &sessionId)) Check(HRESULT_FROM_WIN32(GetLastError()));
             wrl::ComPtr<IRunningTask> running;
             // IGNORE_NEW also handles a logon trigger or another demand start racing this call.
             Check(task->RunEx(_variant_t(), TASK_RUN_USE_SESSION_ID, sessionId, nullptr, &running));
+            log.Info("Listener task demand-start accepted for session=%lu; input readiness is logged by the listener", sessionId);
             return true;
         }
         catch (const std::exception &error)
