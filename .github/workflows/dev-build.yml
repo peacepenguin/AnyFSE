@@ -61,7 +61,6 @@ jobs:
           $installer = Get-ChildItem build/Release -Filter 'AnyFSE.Installer.Offline.*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $installer) { throw 'Offline installer was not produced.' }
           Copy-Item $installer.FullName dist/
-          Get-ChildItem build/Release -Filter '*.pdb.zip' | Copy-Item -Destination dist/
           Get-FileHash dist/* -Algorithm SHA256 | Format-Table Hash, Path -AutoSize | Out-String -Width 250 | Write-Host
 
       - name: Upload installer
