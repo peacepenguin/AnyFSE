@@ -39,7 +39,7 @@ jobs:
 
       - name: Build offline installer (LTO)
         shell: pwsh
-        run: ./scripts/Build-Dev.ps1 -Configuration Release -Lto -AllowUpdates -Revision 0
+        run: ./scripts/Build-Dev.ps1 -Configuration Release -Lto -Revision 0
 
       - name: Collect installer
         shell: pwsh
