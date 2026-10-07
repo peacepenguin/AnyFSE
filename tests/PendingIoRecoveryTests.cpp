@@ -1,15 +1,16 @@
 #include <windows.h>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include "Ally/ACSEfilter/PendingIoRecovery.h"
-
-#pragma comment(lib, "kernelbase.lib")
 
 namespace
 {
     namespace c
     {
         constexpr wchar_t PipePrefix[] = L"\\\\.\\pipe\\AnyFSE.PendingIoRecoveryTest.";
+        constexpr wchar_t KernelBaseModule[] = L"KernelBase.dll";
+        constexpr char CompareHandlesExport[] = "CompareObjectHandles";
     }
 
     void Check(bool condition, const char* message)
@@ -74,11 +75,21 @@ namespace
 
 int main()
 {
+    // The Windows runtime exports this API, but not every SDK ships kernelbase.lib.
+    // Resolve it explicitly so the test only needs the standard kernel32 imports.
+    const HMODULE kernelBase = GetModuleHandleW(c::KernelBaseModule);
+    Check(kernelBase != nullptr, "Find KernelBase module");
+    const FARPROC address = GetProcAddress(kernelBase, c::CompareHandlesExport);
+    Check(address != nullptr, "Resolve CompareObjectHandles");
+    decltype(&CompareObjectHandles) compareHandles = nullptr;
+    static_assert(sizeof(compareHandles) == sizeof(address));
+    std::memcpy(&compareHandles, &address, sizeof(compareHandles));
+
     Pipe target(L".target");
     Pipe unrelated(L".unrelated");
     target.BeginRead(); // Exists before interception/recovery, so no tracked buffer is available.
     unrelated.BeginRead();
-    const auto matches = [&](HANDLE handle) { return CompareObjectHandles(handle, target.server) != FALSE; };
+    const auto matches = [&](HANDLE handle) { return compareHandles(handle, target.server) != FALSE; };
     Check(ACSEFilter::Startup::CancelPendingIo(matches) == ERROR_SUCCESS, "Snapshot recovery");
     Check(WaitForSingleObject(target.read.hEvent, 2000) == WAIT_OBJECT_0, "Cancellation timeout");
     DWORD bytes = 0;
