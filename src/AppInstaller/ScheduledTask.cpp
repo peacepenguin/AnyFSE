@@ -220,9 +220,39 @@ namespace AnyFSE::ToolsEx::ScheduledTask
         const HRESULT found = folder->GetTask(_bstr_t(c::AnyFseListenerTaskName), &task);
         if (found == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)) return;
         Check(found);
-        const HRESULT stopped = task->Stop(0);
-        if (stopped == S_FALSE) throw std::runtime_error("Could not stop AnyFSE Listener task");
-        Check(stopped);
-        DeleteTaskByName(c::AnyFseListenerTaskName);
+        VARIANT_BOOL enabled = VARIANT_FALSE;
+        Check(task->get_Enabled(&enabled));
+        Check(task->put_Enabled(VARIANT_FALSE));
+        try
+        {
+            const auto hasInstances = [&task]() {
+                wrl::ComPtr<IRunningTaskCollection> instances;
+                Check(task->GetInstances(0, &instances));
+                LONG count = 0;
+                Check(instances->get_Count(&count));
+                return count != 0;
+            };
+            if (hasInstances())
+            {
+                const HRESULT stopped = task->Stop(0);
+                // The last instance may exit between GetInstances and Stop. S_FALSE alone
+                // is not proof of a remaining listener, nor is S_OK proof it has finished.
+                if (stopped != SCHED_E_TASK_NOT_RUNNING) Check(stopped);
+                const ULONGLONG deadline = GetTickCount64() + 10000;
+                while (hasInstances())
+                {
+                    if (GetTickCount64() >= deadline)
+                        throw std::runtime_error("AnyFSE Listener task still has active instances after stopping; retry uninstall");
+                    Sleep(100);
+                }
+            }
+            DeleteTaskByName(c::AnyFseListenerTaskName);
+        }
+        catch (...)
+        {
+            // A failed uninstall should not permanently disable the installed listener.
+            task->put_Enabled(enabled);
+            throw;
+        }
     }
 }
