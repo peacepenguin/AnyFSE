@@ -29,6 +29,7 @@
                 "AnyFSE.sln",
                 "-property:Configuration=Release",
                 "-property:Platform=x64",
+                "-maxcpucount",
                 "-target:AnyFSE;AnyFSE_Settings;AnyFSE_ACSEFilterHook;AnyFSE_ACSEFilterInjector"
             ],
             "problemMatcher": [
@@ -47,6 +48,7 @@
                 "AnyFSE.sln",
                 "-property:Configuration=Debug",
                 "-property:Platform=x64",
+                "-maxcpucount",
                 "-target:Clean"
             ],
             "problemMatcher": [
@@ -65,6 +67,7 @@
                 "AnyFSE.sln",
                 "-property:Configuration=Debug",
                 "-property:Platform=x64",
+                "-maxcpucount",
                 "-target:AnyFSE;AnyFSE_Settings;AnyFSE_ACSEFilterHook;AnyFSE_ACSEFilterInjector"
             ],
             "problemMatcher": [

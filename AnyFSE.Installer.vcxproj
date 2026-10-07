@@ -43,12 +43,14 @@
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <WholeProgramOptimization Condition="'$(Lto)'=='true'">true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
     <PreBuildEventUseInBuild>true</PreBuildEventUseInBuild>
     <OutputDirectory>build\$(Configuration)\</OutputDirectory>
   </PropertyGroup>
+  <PropertyGroup><UsePch>true</UsePch></PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="AnyFSE.Build.props" />
   <PropertyGroup>
     <OutDir>$(SolutionDir)build\$(Configuration)\</OutDir>
     <PackageDir>$(MSBuildProjectDirectory)\build\objs\Package\$(Configuration)\$(Platform)</PackageDir>
@@ -140,7 +142,7 @@
     <ClCompile Include="src\AppInstaller\Admin.cpp" />
     <ClCompile Include="src\AppInstaller\Certificate.cpp" />
     <ClCompile Include="src\AppInstaller\Zip.cpp" />
-    <ClCompile Include="src\Tools\miniz\miniz.c" />
+    <ClCompile Include="src\Tools\miniz\miniz.c"><PrecompiledHeader>NotUsing</PrecompiledHeader><ForcedIncludeFiles></ForcedIncludeFiles></ClCompile>
     <ClCompile Include="src\FluentDesign\Theme.cpp" />
     <ClCompile Include="src\FluentDesign\FluentControl.cpp" />
     <ClCompile Include="src\FluentDesign\Align.cpp" />

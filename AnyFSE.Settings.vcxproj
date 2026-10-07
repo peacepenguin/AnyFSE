@@ -38,13 +38,15 @@
     <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
         <UseDebugLibraries>false</UseDebugLibraries>
         <PlatformToolset>v143</PlatformToolset>
-        <WholeProgramOptimization>true</WholeProgramOptimization>
+        <WholeProgramOptimization Condition="'$(Lto)'=='true'">true</WholeProgramOptimization>
         <CharacterSet>Unicode</CharacterSet>
         <OutDir>build\$(Configuration)\</OutDir>
         <IntermediateOutputPath>build\objs\$(TargetName)\$(Configuration)\</IntermediateOutputPath>
     </PropertyGroup>
 
+    <PropertyGroup><UsePch>true</UsePch></PropertyGroup>
     <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+    <Import Project="AnyFSE.Build.props" />
 
     <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
         <ClCompile>

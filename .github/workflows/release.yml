@@ -1,0 +1,58 @@
+name: Release
+
+# Push a tag named v<AssemblyVersion> (e.g. v1.0.0, matching AnyFSE.Version.props) to build with -p:Lto=true and publish a GitHub release.
+# A tag that does not match the version in AnyFSE.Version.props fails the run before anything is built.
+# Binaries are signed with a throwaway self-signed certificate (scripts/Build-Dev.ps1), the same as the dev build.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches version
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$props = Get-Content AnyFSE.Version.props
+          $version = ($props.Project.PropertyGroup | ForEach-Object { $_.AssemblyVersion } | Where-Object { $_ } | Select-Object -First 1)
+          if (-not $version) { throw 'AssemblyVersion not found in AnyFSE.Version.props' }
+          $expected = "v$version"
+          if ($env:GITHUB_REF_NAME -ne $expected) {
+            throw "Tag '$env:GITHUB_REF_NAME' does not match AssemblyVersion '$version' (expected tag '$expected')."
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Check Windows SDK
+        shell: pwsh
+        run: |
+          $sdks = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Directory | Select-Object -ExpandProperty Name
+          if ($sdks -notcontains '10.0.26100.0') { throw 'Windows SDK 10.0.26100.0 is required by the projects but is not installed on this runner.' }
+
+      - name: Build offline installer (LTO)
+        shell: pwsh
+        run: ./scripts/Build-Dev.ps1 -Configuration Release -Lto -AllowUpdates
+
+      - name: Collect installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $installer = Get-ChildItem build/Release -Filter 'AnyFSE.Installer.Offline.*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $installer) { throw 'Offline installer was not produced.' }
+          Copy-Item $installer.FullName dist/
+          Get-FileHash dist/* -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content dist/SHA256SUMS.txt
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME dist/* --title "AnyFSE ${{ steps.version.outputs.version }}" --generate-notes --verify-tag

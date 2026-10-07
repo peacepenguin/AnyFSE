@@ -39,12 +39,14 @@
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <WholeProgramOptimization Condition="'$(Lto)'=='true'">true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
     <PreBuildEventUseInBuild>true</PreBuildEventUseInBuild>
     <OutputDirectory>build\$(Configuration)\</OutputDirectory>
   </PropertyGroup>
+  <PropertyGroup><UsePch>true</UsePch></PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="AnyFSE.Build.props" />
   <PropertyGroup>
     <OutDir>$(SolutionDir)build\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)\build\objs\$(TargetName)\$(Configuration)\</IntDir>

@@ -17,6 +17,9 @@
 .PARAMETER AllowUpdates
     Keep the updater enabled. By default dev builds compile it out (ANYFSE_DISABLE_UPDATES).
 
+.PARAMETER Lto
+    Build with whole program optimization (-p:Lto=true). Slower to build; used by the release workflow.
+
 .PARAMETER Install
     Launch the freshly built offline installer elevated and wait for it to finish.
 
@@ -28,6 +31,7 @@ param(
     [ValidateSet('Release', 'Debug')]
     [string] $Configuration = 'Release',
     [switch] $Install,
+    [switch] $Lto,
     [switch] $AllowUpdates
 )
 
@@ -105,6 +109,7 @@ Export-Certificate -Cert $packageCert -FilePath $tempCert -Force | Out-Null
 $overrides += "-p:TempCertPath=$tempCert"
 # Dev builds must not offer or install upstream releases over the build under test
 if (-not $AllowUpdates) { $overrides += '-p:DisableUpdates=true' }
+if ($Lto) { $overrides += '-p:Lto=true' }
 
 # The project files shell out to Windows PowerShell (powershell.exe) to find the signing certificate. When this script runs
 # under PowerShell 7 that child inherits pwsh's module path and fails to load the certificate provider's parameters
@@ -114,7 +119,7 @@ if ($PSVersionTable.PSEdition -eq 'Core') {
 }
 
 # --- Build (same steps as .vscode\tasks.json) ----------------------------------------------------------------------
-$common = @("-property:Configuration=$Configuration", '-property:Platform=x64') + $overrides
+$common = @("-property:Configuration=$Configuration", '-property:Platform=x64', '-maxcpucount') + $overrides
 $sln = Join-Path $repo 'AnyFSE.sln'
 
 Invoke-Step "Build AnyFSE $Configuration" {
