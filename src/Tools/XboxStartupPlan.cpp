@@ -1,6 +1,7 @@
 // Adapted from XboxStartupEnabler, Copyright (c) 2026 Victor Jimenez (MIT).
 // See THIRD_PARTY_NOTICES/XboxStartupEnabler.txt.
 #include "XboxStartupPlan.hpp"
+#include "App/Constants.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <limits>
@@ -11,6 +12,7 @@ namespace AnyFSE::Tools::XboxStartup
 {
     namespace
     {
+        namespace c = App::Constants;
         void Require(bool valid, const char *message)
         {
             if (!valid) throw std::runtime_error(message);
@@ -20,6 +22,7 @@ namespace AnyFSE::Tools::XboxStartup
             const Bytes& data;
             std::size_t sections, count;
             std::uint32_t exportRva, exportSize;
+            std::uint32_t exceptionRva = 0, exceptionSize = 0;
         public:
             std::size_t checksum;
             void Range(std::size_t off, std::size_t length) const
@@ -44,15 +47,41 @@ namespace AnyFSE::Tools::XboxStartup
                 Require(U32(pe) == 0x4550 && U16(pe + 4) == 0x8664, "Expected x64 PE image");
                 Require(U16(optional) == 0x20B && U16(pe + 20) >= 120, "Expected PE32+ optional header");
                 Range(optional, U16(pe + 20));
-                Require(U32(optional + 108) > 0, "Missing export directory slot");
+                const auto directories = U32(optional + 108);
+                Require(directories > 0 && directories <= (U16(pe + 20) - 112u) / 8, "Invalid PE directory count");
                 exportRva = U32(optional + 112);
                 exportSize = U32(optional + 116);
+                if (directories > 3)
+                {
+                    exceptionRva = U32(optional + 136);
+                    exceptionSize = U32(optional + 140);
+                }
                 checksum = optional + 64;
                 count = U16(pe + 6);
                 sections = optional + U16(pe + 20);
                 Range(sections, count * 40);
+                Require(count > 0, "Missing PE sections");
+                for (std::size_t i = 0; i < count; ++i)
+                {
+                    const auto section = sections + i * 40;
+                    const auto raw = U32(section + 20), size = U32(section + 16), rva = U32(section + 12);
+                    if (!size) continue;
+                    Range(raw, size);
+                    Require(raw >= sections + count * 40, "Section overlaps PE headers");
+                    Require(std::uint64_t(rva) + size <= (std::uint64_t{1} << 32), "Section RVA overflow");
+                    for (std::size_t j = 0; j < i; ++j)
+                    {
+                        const auto other = sections + j * 40;
+                        const auto otherRaw = U32(other + 20), otherSize = U32(other + 16), otherRva = U32(other + 12);
+                        if (!otherSize) continue;
+                        Require(std::uint64_t(raw) + size <= otherRaw || std::uint64_t(otherRaw) + otherSize <= raw,
+                            "Overlapping raw PE sections");
+                        Require(std::uint64_t(rva) + size <= otherRva || std::uint64_t(otherRva) + otherSize <= rva,
+                            "Overlapping PE section RVAs");
+                    }
+                }
             }
-            std::size_t Offset(std::uint32_t rva) const
+            std::size_t Offset(std::uint32_t rva, std::size_t length = 1) const
             {
                 for (std::size_t i = 0; i < count; ++i)
                 {
@@ -60,12 +89,24 @@ namespace AnyFSE::Tools::XboxStartup
                     const auto start = U32(section + 12), size = U32(section + 16);
                     if (rva >= start && std::uint64_t(rva) - start < size)
                     {
+                        Require(length <= size - (rva - start), "RVA span crosses section boundary");
                         const std::size_t off = std::size_t(U32(section + 20)) + (rva - start);
-                        Range(off, 1);
+                        Range(off, length);
                         return off;
                     }
                 }
                 throw std::runtime_error("RVA is not backed by section data");
+            }
+            std::uint32_t Rva(std::size_t off) const
+            {
+                for (std::size_t i = 0; i < count; ++i)
+                {
+                    const auto section = sections + i * 40;
+                    const auto start = U32(section + 20), size = U32(section + 16);
+                    if (off >= start && off - start < size)
+                        return static_cast<std::uint32_t>(U32(section + 12) + (off - start));
+                }
+                throw std::runtime_error("File offset is not backed by section data");
             }
             std::vector<std::pair<std::size_t, std::size_t>> Code() const
             {
@@ -91,18 +132,18 @@ namespace AnyFSE::Tools::XboxStartup
             std::size_t Export(const std::string& wanted) const
             {
                 Require(exportRva && exportSize >= 40, "Missing export table");
-                const auto exp = Offset(exportRva);
+                const auto exp = Offset(exportRva, exportSize);
                 const auto namesCount = U32(exp + 24), functionCount = U32(exp + 20);
-                const auto funcs = Offset(U32(exp + 28)), names = Offset(U32(exp + 32)), ords = Offset(U32(exp + 36));
-                Range(names, std::size_t(namesCount) * 4);
-                Range(ords, std::size_t(namesCount) * 2);
-                Range(funcs, std::size_t(functionCount) * 4);
+                const auto funcs = Offset(U32(exp + 28), std::size_t(functionCount) * 4);
+                const auto names = Offset(U32(exp + 32), std::size_t(namesCount) * 4);
+                const auto ords = Offset(U32(exp + 36), std::size_t(namesCount) * 2);
                 for (std::size_t i = 0; i < namesCount; ++i)
                 {
                     const auto name = Offset(U32(names + i * 4));
                     auto end = name;
                     while (end < data.size() && data[end]) ++end;
                     Require(end < data.size(), "Unterminated export name");
+                    Offset(U32(names + i * 4), end - name + 1);
                     if (std::string(data.begin() + name, data.begin() + end) != wanted) continue;
                     const auto ordinal = U16(ords + i * 2);
                     Require(ordinal < functionCount, "Invalid export ordinal");
@@ -114,6 +155,25 @@ namespace AnyFSE::Tools::XboxStartup
                 }
                 throw std::runtime_error("Required gaming export is missing");
             }
+            std::size_t FunctionEnd(std::size_t entry) const
+            {
+                // x64 RUNTIME_FUNCTION entries give an exclusive end RVA. Never scan into a neighboring function.
+                Require(exceptionRva && exceptionSize && exceptionSize % 12 == 0, "Missing or malformed x64 function table");
+                const auto table = Offset(exceptionRva, exceptionSize);
+                std::size_t endOffset = 0;
+                std::uint32_t previousEnd = 0;
+                for (std::size_t i = 0; i < exceptionSize; i += 12)
+                {
+                    const auto begin = U32(table + i), end = U32(table + i + 4);
+                    Require(begin < end && begin >= previousEnd, "Unordered or overlapping x64 functions");
+                    previousEnd = end;
+                    const auto off = Offset(begin, end - begin);
+                    Require(IsCode(off, end - begin), "x64 function is outside executable code");
+                    if (off == entry) endOffset = off + (end - begin);
+                }
+                Require(endOffset != 0, "Gaming setter has no x64 function boundary");
+                return endOffset;
+            }
         };
         bool Match(const Bytes& bytes, std::size_t off, const std::vector<int>& pattern)
         {
@@ -123,7 +183,7 @@ namespace AnyFSE::Tools::XboxStartup
             return true;
         }
         // Hex-dumps the bytes actually present at `off`, "??" past the end of the image. Diagnostic only: this is what makes a
-        // refusal on an unlisted Windows build actionable (add the printed bytes as a new accepted pattern) instead of a dead end.
+        // refusal on an unlisted Windows build actionable. New patterns still require disassembly and behavior validation.
         std::string Dump(const Bytes& bytes, std::size_t off, std::size_t length)
         {
             static const char *hex = "0123456789abcdef";
@@ -161,6 +221,14 @@ namespace AnyFSE::Tools::XboxStartup
                 }() + ": expected [" + DumpPattern(original) + "] or the patched replacement, found [" + Dump(image, off, original.size()) + "]");
             return {off, replacement, State::Original};
         }
+        Site ResolveExport(const Pe& pe, const Bytes& image, const char *name, const std::vector<int>& original, const Bytes& replacement)
+        {
+            auto off = pe.Export(name);
+            // Preserve ENDBR64 if a newer toolchain emits an indirect-branch landing pad.
+            if (Match(image, off, {0xF3, 0x0F, 0x1E, 0xFA})) off += 4;
+            Require(pe.IsCode(off, replacement.size()), "Export patch crosses executable section boundary");
+            return Resolve(image, off, original, replacement);
+        }
         void Checksum(Bytes& image, std::size_t offset)
         {
             std::fill_n(image.begin() + offset, 4, std::uint8_t{0});
@@ -183,13 +251,25 @@ namespace AnyFSE::Tools::XboxStartup
         if (target == Target::GameMode)
         {
             const Bytes stub{0xB8, 1, 0, 0, 0, 0xC3};
-            sites.push_back(Resolve(image, pe.Export("IsGamingFullScreenExperienceSupported"), {0x48, 0x89, 0x5C, 0x24, 8, 0x48}, stub));
-            sites.push_back(Resolve(image, pe.Export("CanSetGamingFullScreenExperience"), {0x48, 0x89, 0x5C, 0x24, 0x20, 0x57}, stub));
-            const auto setter = pe.Export("SetGamingFullScreenExperience");
-            for (std::size_t i = setter; i < setter + 0x80 && i + 8 <= image.size(); ++i)
+            sites.push_back(ResolveExport(pe, image, c::XboxStartupSupportedExport, {0x48, 0x89, 0x5C, 0x24, 8, 0x48}, stub));
+            sites.push_back(ResolveExport(pe, image, c::XboxStartupCanSetExport, {0x48, 0x89, 0x5C, 0x24, 0x20, 0x57}, stub));
+            const auto setter = pe.Export(c::XboxStartupSetExport);
+            const auto functionEnd = pe.FunctionEnd(setter);
+            const auto scanEnd = (std::min)(functionEnd, setter + 0x80);
+            for (std::size_t i = setter; i + 8 <= scanEnd; ++i)
             {
                 if (!pe.IsCode(i, 8) || !Match(image, i, {0x84, 0xC0})) continue;
-                if (Match(image, i + 2, {0x0F, 0x84, -1, -1, -1, -1}) || Match(image, i + 2, {0x90, 0x90, 0x90, 0x90, 0x90, 0x90}))
+                const bool original = Match(image, i + 2, {0x0F, 0x84, -1, -1, -1, -1});
+                if (original)
+                {
+                    const auto relative = pe.U32(i + 4);
+                    const auto displacement = std::int64_t(relative) - ((relative & 0x80000000u) ? (std::int64_t{1} << 32) : 0);
+                    const auto destination = std::int64_t(pe.Rva(i)) + 8 + displacement;
+                    Require(destination >= 0 && destination <= (std::numeric_limits<std::uint32_t>::max)(), "Invalid branch destination RVA");
+                    // Cold blocks and shared epilogues may have separate RUNTIME_FUNCTION entries.
+                    Require(pe.IsCode(pe.Offset(static_cast<std::uint32_t>(destination)), 1), "Home-app branch targets nonexecutable data");
+                }
+                if (original || Match(image, i + 2, {0x90, 0x90, 0x90, 0x90, 0x90, 0x90}))
                     sites.push_back(Resolve(image, i + 2, {0x0F, 0x84, -1, -1, -1, -1}, Bytes(6, 0x90)));
             }
             if (sites.size() != 3)
@@ -197,6 +277,7 @@ namespace AnyFSE::Tools::XboxStartup
         }
         else
         {
+            Require(target == Target::Settings || target == Target::Shell, "Unknown patch target");
             for (const auto& range : pe.Code())
                 for (std::size_t off = range.first; off + 8 <= range.first + range.second; ++off)
                 {
@@ -210,12 +291,14 @@ namespace AnyFSE::Tools::XboxStartup
                         {static_cast<std::uint8_t>(0xB0 + reg), 1, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90}));
                     off += 7;
                 }
-            // Documented six-site layout: three gaming, two Settings, one shell check.
-            const auto expected = target == Target::Settings ? 2u : 1u;
-            if (sites.size() != expected)
-                throw std::runtime_error("Unsupported or ambiguous handheld-check count: found " + std::to_string(sites.size())
-                    + " of " + std::to_string(expected) + " expected sites");
+            // As in upstream, compiler inlining may change the number of identical checks between builds.
+            // Every site must still match the complete original/replacement sequence in executable code.
+            Require(!sites.empty(), "No recognized handheld checks in executable code");
         }
+        auto ordered = sites;
+        std::sort(ordered.begin(), ordered.end(), [](const Site& a, const Site& b) { return a.offset < b.offset; });
+        for (std::size_t i = 1; i < ordered.size(); ++i)
+            Require(ordered[i - 1].offset + ordered[i - 1].replacement.size() <= ordered[i].offset, "Overlapping patch sites");
         return sites;
     }
     Bytes PatchImage(Target target, const Bytes& image)

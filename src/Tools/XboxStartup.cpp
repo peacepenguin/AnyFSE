@@ -83,14 +83,12 @@ namespace AnyFSE::Tools::XboxStartup
         std::wstring WindowsBuildString()
         {
             using RtlGetVersionFn = LONG (NTAPI *)(OSVERSIONINFOEXW *);
-            const auto ntdll = GetModuleHandleW(L"ntdll.dll");
-            const auto rtlGetVersion = ntdll ? reinterpret_cast<RtlGetVersionFn>(GetProcAddress(ntdll, "RtlGetVersion")) : nullptr;
+            const auto ntdll = GetModuleHandleW(c::XboxStartupNtDll);
+            const auto rtlGetVersion = ntdll ? reinterpret_cast<RtlGetVersionFn>(GetProcAddress(ntdll, c::XboxStartupVersionExport)) : nullptr;
             OSVERSIONINFOEXW info{};
             info.dwOSVersionInfoSize = sizeof(info);
             if (!rtlGetVersion || rtlGetVersion(&info) != 0) return L"unknown";
-            DWORD updateBuildRevision = 0, size = sizeof(updateBuildRevision);
-            RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", L"UBR",
-                RRF_RT_REG_DWORD, nullptr, &updateBuildRevision, &size);
+            const DWORD updateBuildRevision = Registry::ReadDWORD(c::WindowsVersionRegKey, c::WindowsRevisionRegValue);
             wchar_t text[64] = {};
             swprintf_s(text, L"%u.%u.%u.%u", info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber, updateBuildRevision);
             return text;
@@ -440,8 +438,8 @@ namespace AnyFSE::Tools::XboxStartup
         if (Registry::ReadDWORD(c::DeviceFormRegKey, c::DeviceFormRegValue) == c::HandheldDeviceForm)
             return true;
         using QueryDeviceForm = VOID (NTAPI *)(ULONGLONG *, DWORD *, DWORD *);
-        const auto ntdll = GetModuleHandleW(L"ntdll.dll");
-        const auto query = ntdll ? reinterpret_cast<QueryDeviceForm>(GetProcAddress(ntdll, "RtlGetDeviceFamilyInfoEnum")) : nullptr;
+        const auto ntdll = GetModuleHandleW(c::XboxStartupNtDll);
+        const auto query = ntdll ? reinterpret_cast<QueryDeviceForm>(GetProcAddress(ntdll, c::XboxStartupDeviceFormExport)) : nullptr;
         if (!query) return true; // Fail closed when Windows device classification is unavailable.
         DWORD form = 0;
         query(nullptr, nullptr, &form);

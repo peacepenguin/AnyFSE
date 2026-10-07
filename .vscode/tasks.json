@@ -15,6 +15,13 @@
     },
     "tasks": [
         {
+            "label": "Test Xbox Startup Patch Plan",
+            "type": "shell",
+            "command": "powershell.exe",
+            "args": ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\Test-XboxStartup.ps1"],
+            "problemMatcher": ["$msCompile"]
+        },
+        {
             "label": "Test Pending I/O Recovery",
             "type": "shell",
             "command": "powershell.exe",

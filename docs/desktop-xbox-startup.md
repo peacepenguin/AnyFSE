@@ -81,8 +81,13 @@ as the compiler keeps emitting the same instructions. `-1`/`??` below means
    Patched: same `B8 01 00 00 00 C3` stub — unconditionally reports the
    caller as permitted.
 
+   If either export starts with `F3 0F 1E FA` (`ENDBR64`), that landing pad
+   is preserved and the known prologue immediately after it is patched instead.
+   This supports that specific compiler variation; other unknown prologues remain refused.
+
 3. **A conditional branch inside `SetGamingFullScreenExperience`.**
-   AnyFSE scans up to 128 bytes past that export's entry point for
+   AnyFSE scans up to 128 bytes past that export's entry point, bounded by its
+   exclusive end in the x64 exception/function table, for
    `84 C0` (`test al, al`) immediately followed by either an unpatched
    `0F 84 ?? ?? ?? ??` (`je rel32`, a 6-byte near-conditional-jump, called
    the "home-app branch" in the code/logs) or an already-NOP'd run of six
@@ -90,9 +95,14 @@ as the compiler keeps emitting the same instructions. `-1`/`??` below means
    execution always falls through past whatever the branch used to skip.
    Exactly one such site must be found (`sites.size() == 3` is enforced for
    the whole DLL); more or fewer is treated as an unrecognized layout and
-   refused rather than guessed at.
+   refused rather than guessed at. The complete pattern must fit inside the
+   function, and an original branch must target file-backed executable code.
+   The destination can be a separate cold block or shared epilogue; it need not
+   share the setter's function-table entry.
+   Missing, malformed, or overlapping function metadata is refused. The scan
+   does not expand into neighboring functions when compiler output changes.
 
-**`SettingsHandlers_Gaming.dll` (2 sites) and `twinui.pcshell.dll` (1 site) —
+**`SettingsHandlers_Gaming.dll` and `twinui.pcshell.dll` —
 resolved via `Target::Settings` / `Target::Shell`, same pattern, scanned
 across every executable section:**
 
@@ -114,8 +124,10 @@ Patched: `B0+reg 01 90 90 90 90 90 90` → `mov <reg8>, 1` followed by six
 result are both removed; the register is simply forced to `1` ("yes, this is
 a handheld"), using the *same* register the original `sete` would have
 written to, so nothing downstream that reads that register needs to change.
-`SettingsHandlers_Gaming.dll` must yield exactly 2 such sites and
-`twinui.pcshell.dll` exactly 1; any other count is refused.
+Each DLL must contain at least one recognized check, and all matching checks
+are patched, as in the upstream patcher. Two Settings sites and one shell site
+were observed on the original example build; those counts are not compatibility
+requirements. Compiler inlining can change the count between Windows builds.
 
 ### Patched vs. original detection, and why mismatches are refused
 
@@ -132,9 +144,9 @@ written to, so nothing downstream that reads that register needs to change.
    `expected [48 89 5c 24 08 48] ... found [48 89 5c 24 20 48]`), and the
    DLL/Windows build number are layered on by the callers in
    `XboxStartup.cpp`. This is what makes a failure on a new Windows build
-   actionable: the log line can be turned directly into a new accepted byte
-   pattern, instead of a dead end. AnyFSE never writes a "best guess" patch
-   over bytes it does not exactly recognize.
+   actionable: the affected function can be disassembled and its behavior
+   checked before adding a new accepted layout. Copying the reported bytes into
+   a signature is not enough to establish compatibility.
 
 A whole-image checksum (`Checksum()`, the standard PE/COFF checksum algorithm)
 is recomputed after patching, matching what the Windows loader and image
@@ -193,13 +205,29 @@ handlers used by settings; they require an installed AnyFSE elevation task.
 
 ## Compatibility and restoration
 
-The recognized layout is the upstream six-site layout: three gaming API changes,
-two Settings checks, and one shell check. Matching byte signatures must be in
+The recognized layouts use three gaming API changes and one or more recognized
+handheld checks in each of Settings and shell. Matching byte signatures must be in
 executable x64 PE sections. Missing exports, unknown prologues, ambiguous branches,
-unexpected site counts, malformed PE data, and partially patched individual images
+missing handheld checks, malformed PE data, and partially patched individual images
 are refused. The upstream project documents testing Windows 11 build 26200.8457;
 its screenshot also records the six sites on the 26100 DLL family. Matching patterns
 are a compatibility check, not a guarantee for every Windows release.
+
+PE directory arrays and names must fit within their backing sections. Overlapping
+raw sections, overlapping section RVA ranges, and overlapping patch sites are
+rejected. Function bounds follow Microsoft's
+[x64 PE function-table format](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#the-pdata-section).
+These checks improve refusal behavior; they do not establish the semantics of a
+future Windows implementation or replace testing on a disposable machine.
+
+A read-only inspection of local DLLs at version **10.0.26100.9278** found one
+recognized Settings check and one shell check; both are accepted. The local
+`gamemode.dll` has an unrecognized support-export prologue and lacks the expected
+`test al, al` setter gate. Those particular bytes remain unrecognized by both
+this engine and the pinned upstream signatures. This is a finding about the
+inspected files, not proof that the Windows release cannot support the feature.
+A successful installation on the same OS version should be compared using the
+actual DLLs, patcher revision, and backup files.
 
 All three images are validated before replacement. Original bytes are backed up
 under `%ProgramData%\AnyFSE-XboxStartupBackups`, keyed by the SHA-256 of the full
@@ -220,12 +248,30 @@ silently reapply patches at logon, during installation, or after an update.
 
 ## Regression checks
 
-Run `scripts/Test-XboxStartup.ps1` in an x64 Visual Studio Developer PowerShell.
+Run the **Test Xbox Startup Patch Plan** VS Code task, or
+`scripts/Test-XboxStartup.ps1` in an x64 Visual Studio Developer PowerShell.
 It builds and runs `tests/XboxStartupPlanTests.cpp` against the same pure PE engine
 used by the application. Checks cover all patch sites, byte-register preservation,
 idempotence, preserving unrelated image bytes, ignoring patterns in data sections,
-and refusal of truncated, ambiguous, forwarded-export, wrong-machine and unexpected
-site-count fixtures. The suite never writes Windows system files.
+and refusal of truncated, ambiguous, forwarded-export, wrong-machine and missing
+check fixtures. It also checks variable check counts, landing-pad preservation and idempotence,
+function-boundary enforcement, branch destinations, and malformed section/directory
+metadata. The dev-build CI runs this suite. The suite never writes Windows system files.
+
+After compiling the tests, the same executable can inspect three real DLLs
+without modifying them. In PowerShell:
+
+```powershell
+./build/tests/XboxStartupPlanTests.exe `
+    "$env:SystemRoot/System32/gamemode.dll" `
+    "$env:SystemRoot/System32/SettingsHandlers_Gaming.dll" `
+    "$env:SystemRoot/System32/twinui.pcshell.dll"
+```
+
+It reports recognized site counts, offsets and states, verifies apply/detect/reapply
+in memory, or reports the refusal reason for each file, and returns
+a failure exit code if any image is unsupported. Recognition is not an installed
+behavior test and does not bypass the handheld guard in the application.
 
 On a disposable compatible Windows test machine, additionally verify:
 

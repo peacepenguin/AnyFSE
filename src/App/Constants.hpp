@@ -14,6 +14,14 @@ namespace AnyFSE::App::Constants
     inline constexpr wchar_t XboxStartupGameModeDll[] = L"gamemode.dll";
     inline constexpr wchar_t XboxStartupSettingsDll[] = L"SettingsHandlers_Gaming.dll";
     inline constexpr wchar_t XboxStartupShellDll[] = L"twinui.pcshell.dll";
+    inline constexpr char XboxStartupSupportedExport[] = "IsGamingFullScreenExperienceSupported";
+    inline constexpr char XboxStartupCanSetExport[] = "CanSetGamingFullScreenExperience";
+    inline constexpr char XboxStartupSetExport[] = "SetGamingFullScreenExperience";
+    inline constexpr wchar_t XboxStartupNtDll[] = L"ntdll.dll";
+    inline constexpr char XboxStartupVersionExport[] = "RtlGetVersion";
+    inline constexpr char XboxStartupDeviceFormExport[] = "RtlGetDeviceFamilyInfoEnum";
+    inline constexpr wchar_t WindowsVersionRegKey[] = L"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
+    inline constexpr wchar_t WindowsRevisionRegValue[] = L"UBR";
     inline constexpr wchar_t XboxStartupBackupDirectory[] = L"AnyFSE-XboxStartupBackups";
     inline constexpr wchar_t XboxStartupBackupSuffix[] = L".original";
     inline constexpr wchar_t XboxStartupNewSuffix[] = L".anyfse-new-";
