@@ -148,12 +148,7 @@ namespace AnyFSE::App::CmdLine
 
         Elevated::Register(Constants::ElevatedStartLauncher,  []() { Launchers::StartLauncher(false); });
         Elevated::Register(Constants::ElevatedStartupApps, []() { Launchers::LaunchStartupApps(true); });
-        Elevated::Register(Constants::ElevatedApplyDesktopXboxStartup, []() {
-            Tools::XboxStartup::Apply();
-            // Undo only AnyFSE's previous form-factor spoof when migrating to the narrower patch.
-            if (GamingExperience::IsGamingHandheld() && Registry::ValueExists(Constants::DeviceFormRegKey, Constants::DeviceFormBackupRegValue))
-                GamingExperience::RestoreGamingPC();
-        });
+        Elevated::Register(Constants::ElevatedApplyDesktopXboxStartup, Tools::XboxStartup::Apply);
         Elevated::Register(Constants::ElevatedRestoreDesktopXboxStartup, Tools::XboxStartup::Restore);
         Elevated::Register(Constants::ElevatedRestoreGamingPC, GamingExperience::RestoreGamingPC);
 

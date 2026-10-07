@@ -11,6 +11,8 @@
 #include <array>
 #include <stdexcept>
 #include <exception>
+#include <cwchar>
+#include <utility>
 #include "XboxStartup.hpp"
 #include "XboxStartupPlan.hpp"
 #include "Tools/Unicode.hpp"
@@ -178,6 +180,16 @@ namespace AnyFSE::Tools::XboxStartup
                 information |= (control & SE_DACL_PROTECTED) ? PROTECTED_DACL_SECURITY_INFORMATION : UNPROTECTED_DACL_SECURITY_INFORMATION;
             }
             ~FileSecurity() { if (descriptor) LocalFree(descriptor); }
+            std::wstring Describe() const
+            {
+                LPWSTR text = nullptr;
+                Check(ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, SDDL_REVISION_1,
+                    OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                    &text, nullptr) != FALSE, "Serialize original permissions");
+                const std::wstring result(text);
+                LocalFree(text);
+                return result;
+            }
             void Restore(const fs::path& path) const
             {
                 Check(SetFileSecurityW(path.c_str(), information, descriptor) != FALSE, "Restore original owner and ACL");
@@ -215,13 +227,41 @@ namespace AnyFSE::Tools::XboxStartup
             StringFromGUID2(id, text, 40);
             return text;
         }
-        void Replace(const fs::path& path, const Bytes& expected, const Bytes& replacement)
+        void Record(const fs::path& journal, const std::wstring& message)
+        {
+            SYSTEMTIME time{};
+            GetSystemTime(&time);
+            wchar_t stamp[40]{};
+            swprintf_s(stamp, L"%04u-%02u-%02uT%02u:%02u:%02u.%03uZ ",
+                time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond, time.wMilliseconds);
+            const auto text = Unicode::to_string(std::wstring(stamp) + message + L"\r\n");
+            HANDLE file = CreateFileW(journal.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+                OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            Check(file != INVALID_HANDLE_VALUE, "Open recovery journal");
+            DWORD written = 0;
+            const bool okay = WriteFile(file, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) != FALSE
+                && written == text.size() && FlushFileBuffers(file) != FALSE;
+            const DWORD error = GetLastError();
+            CloseHandle(file);
+            SetLastError(error);
+            Check(okay, "Persist recovery journal");
+        }
+        void RecoveryRecord(const fs::path& journal, const std::wstring& message) noexcept
+        {
+            try { Record(journal, message); }
+            catch (...) { log.Error("Could not persist recovery journal entry: %ls", message.c_str()); }
+        }
+        void Replace(const fs::path& path, const Bytes& expected, const Bytes& replacement, const fs::path& journal, bool recovery = false)
         {
             if (Read(path) != expected) throw std::runtime_error("System image changed during operation; retry inspection");
             FileSecurity security(path);
             const auto suffix = UniqueSuffix();
             const fs::path staged = path.wstring() + c::XboxStartupNewSuffix + suffix;
             const fs::path previous = path.wstring() + c::XboxStartupOldSuffix + suffix;
+            const auto pending = L"REPLACE_PENDING target=" + path.wstring() + L" staged=" + staged.wstring()
+                + L" previous=" + previous.wstring() + L" before=" + Hash(expected) + L" after=" + Hash(replacement);
+            if (recovery) RecoveryRecord(journal, pending);
+            else Record(journal, pending);
             bool renamed = false, installed = false;
             try
             {
@@ -231,6 +271,7 @@ namespace AnyFSE::Tools::XboxStartup
                 renamed = true;
                 Check(MoveFileExW(staged.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH) != FALSE, "Install replacement image");
                 installed = true;
+                if (Read(path) != replacement) throw std::runtime_error("Installed image verification failed");
                 security.Restore(path);
                 security.Restore(previous);
             }
@@ -250,17 +291,25 @@ namespace AnyFSE::Tools::XboxStartup
                         Check(MoveFileExW(previous.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH) != FALSE, "Roll back replacement");
                     }
                     security.Restore(path);
+                    RecoveryRecord(journal, L"FILE_ROLLBACK_OK target=" + path.wstring());
                 }
                 catch (const std::exception& error)
                 {
+                    RecoveryRecord(journal, L"FILE_ROLLBACK_FAILED target=" + path.wstring() + L" previous=" + previous.wstring()
+                        + L" error=" + Unicode::to_wstring(error.what()));
                     throw std::runtime_error("Replacement and rollback failed; original retained at " + previous.u8string() + ": " + error.what());
                 }
                 std::error_code ignored;
                 fs::remove(staged, ignored);
                 std::rethrow_exception(failure);
             }
+            RecoveryRecord(journal, L"REPLACE_OK target=" + path.wstring());
+            RecoveryRecord(journal, L"REBOOT_DELETE_PENDING path=" + previous.wstring());
             if (!MoveFileExW(previous.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT))
+            {
+                RecoveryRecord(journal, L"REBOOT_DELETE_NOT_SCHEDULED path=" + previous.wstring());
                 log.Warn("Old loaded image retained until manual cleanup: %ls", previous.c_str());
+            }
         }
         struct Change { fs::path path; Bytes before, after; };
         bool All(const std::vector<Site>& sites, State state)
@@ -273,6 +322,7 @@ namespace AnyFSE::Tools::XboxStartup
             Privilege restoreOwnership(SE_RESTORE_NAME);
             const auto directory = SystemDirectory(), backups = BackupDirectory();
             std::vector<Change> changes;
+            std::vector<std::pair<fs::path, Bytes>> snapshots;
             // Resolve and validate every target before changing any system file.
             for (const auto& spec : specs)
             {
@@ -281,6 +331,7 @@ namespace AnyFSE::Tools::XboxStartup
                     const auto path = directory / spec.name;
                     const auto before = Read(path);
                     const auto plan = BuildPlan(spec.target, before);
+                    snapshots.emplace_back(path, before);
                     if (restore)
                     {
                         if (All(plan, State::Original)) continue;
@@ -302,9 +353,25 @@ namespace AnyFSE::Tools::XboxStartup
                     throw std::runtime_error(Unicode::to_string(spec.name) + ": " + error.what());
                 }
             }
+            PrepareBackups(backups);
+            const auto journal = backups / (L"operation-" + UniqueSuffix() + L".log");
+            Record(journal, restore ? L"BEGIN restore" : L"BEGIN apply");
+            log.Info("Xbox startup recovery journal: %ls", journal.c_str());
+            // Snapshot all validated targets before replacing any, including unchanged files.
+            // Snapshots are not used as original restore backups.
+            for (const auto& snapshot : snapshots)
+            {
+                const auto hash = Hash(snapshot.second);
+                const auto saved = backups / (snapshot.first.filename().wstring() + L"." + hash + L".snapshot");
+                if (!fs::exists(saved)) Write(saved, snapshot.second);
+                if (Read(saved) != snapshot.second) throw std::runtime_error("Snapshot verification failed");
+                FileSecurity security(snapshot.first);
+                Record(journal, L"SECURITY target=" + snapshot.first.wstring() + L" sddl=" + security.Describe());
+                Record(journal, L"SNAPSHOT target=" + snapshot.first.wstring() + L" sha256=" + hash
+                    + L" backup=" + saved.wstring());
+            }
             if (!restore && !changes.empty())
             {
-                PrepareBackups(backups);
                 for (const auto& change : changes)
                 {
                     const fs::path backup = backups / (change.path.filename().wstring() + L"." + Hash(change.after) + c::XboxStartupBackupSuffix);
@@ -313,6 +380,9 @@ namespace AnyFSE::Tools::XboxStartup
                         if (Read(backup) != change.before) throw std::runtime_error("Existing original backup does not match");
                     }
                     else Write(backup, change.before);
+                    if (Read(backup) != change.before) throw std::runtime_error("Original backup verification failed");
+                    Record(journal, L"ORIGINAL_BACKUP target=" + change.path.wstring() + L" backup=" + backup.wstring()
+                        + L" original=" + Hash(change.before) + L" patched=" + Hash(change.after));
                 }
             }
             std::size_t completed = 0;
@@ -320,7 +390,7 @@ namespace AnyFSE::Tools::XboxStartup
             {
                 for (const auto& change : changes)
                 {
-                    Replace(change.path, change.before, change.after);
+                    Replace(change.path, change.before, change.after, journal);
                     ++completed;
                     log.Info("%s desktop Xbox startup patch: %ls", restore ? "Restored" : "Applied", change.path.c_str());
                 }
@@ -328,14 +398,16 @@ namespace AnyFSE::Tools::XboxStartup
             catch (...)
             {
                 const auto failure = std::current_exception();
+                RecoveryRecord(journal, L"FAILED; rolling back completed replacements");
                 while (completed)
                 {
                     const auto& change = changes[--completed];
-                    try { Replace(change.path, change.after, change.before); }
-                    catch (const std::exception& error) { log.Error("Rollback failed for %ls: %s", change.path.c_str(), error.what()); }
+                    try { Replace(change.path, change.after, change.before, journal, true); RecoveryRecord(journal, L"ROLLBACK_OK target=" + change.path.wstring()); }
+                    catch (const std::exception& error) { RecoveryRecord(journal, L"ROLLBACK_FAILED target=" + change.path.wstring() + L" error=" + Unicode::to_wstring(error.what())); log.Error("Rollback failed for %ls: %s", change.path.c_str(), error.what()); }
                 }
                 std::rethrow_exception(failure);
             }
+            RecoveryRecord(journal, L"COMPLETED");
         }
     }
     Status Inspect()

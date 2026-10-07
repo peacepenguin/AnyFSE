@@ -21,9 +21,9 @@ required.
 5. Sign in again and confirm the selected Home app starts. Verify the same settings
    are exposed in Windows Settings > Gaming.
 
-New activation does not change `OEM\DeviceForm`. When migrating an older AnyFSE
-form-factor override, activation restores the prior value using AnyFSE's existing
-registry backup. Real handhelds continue to work without needing these patches.
+Activation and DLL restoration do not change `OEM\DeviceForm`. Any older registry
+override must be restored separately. Real handhelds continue to work without needing
+these patches.
 
 `AnyFSE.exe /XboxStartup status` (or `verify`) inspects the three DLLs and shows
 per-file state, also writing it to the AnyFSE log. Inspection works before the
@@ -70,10 +70,42 @@ On a disposable compatible Windows test machine, additionally verify:
 
 - Status reports three original files, then three enabled files after activation.
 - Home app selection and startup controls appear on a non-handheld.
-- `OEM\DeviceForm` remains unchanged unless undoing an older AnyFSE-owned override.
+- `OEM\DeviceForm` remains unchanged during both apply and restore.
 - Native Xbox and an AnyFSE launcher each start at sign-in when selected.
 - Restore returns the DLLs byte-for-byte to their saved originals, including owner
   and DACL, and the original device form stays intact.
 - An unsupported Windows build fails before any system file is changed.
 - A simulated Windows update causes stale-backup restoration to be refused.
 - Existing Ally mappings and the dedicated background listener still work.
+
+## Recovery during dev-build testing
+
+Installing or starting AnyFSE does not apply the desktop DLL patches. On an Ally,
+test normal handheld behavior first; enable the experimental patches only if needed.
+The function-hook prototype discussed for future work is not implemented in this build.
+
+Before applying or restoring, all three supported DLL images are snapshotted under
+`%ProgramData%\AnyFSE-XboxStartupBackups`, including unchanged images. Each
+`<dll>.<SHA256>.snapshot` is verified by reading it back before any replacement.
+Original restore backups are separately named `.original` and also verified.
+An already externally patched image can be snapshotted, but that snapshot cannot
+recover the unpatched original; restore using the original patcher in that case.
+
+Each operation writes a flushed `operation-{GUID}.log` in the same directory.
+It records UTC timestamps, target and backup paths, SHA-256 hashes, original
+owner/group/DACL as SDDL, temporary rename paths, replacement results, rollback
+results, and pending reboot cleanup. Keep this directory when reporting a test
+failure. A journal without `COMPLETED` requires inspection; it does not trigger
+automatic recovery after a crash or power loss. Recovery attempts continue even
+if writing the journal fails, with that failure reported in the regular AnyFSE log.
+
+To revert DLL changes, use **Restore desktop Xbox startup changes** or run
+`AnyFSE.exe /XboxStartup restore` from the installed build, then restart Windows.
+Run `AnyFSE.exe /XboxStartup status` afterward. Restore refuses backups that no
+longer match the current Windows image, including after Windows servicing.
+Do not copy snapshots over newer Windows DLLs manually.
+
+The DLL journal does not cover independent launcher, Home app, startup, Ally-button,
+or installer settings. Record their prior values before testing and restore those
+settings separately. Restore DLL changes before uninstalling AnyFSE; retain backups
+and journals until testing is finished.
