@@ -39,6 +39,7 @@
 #include "Tools/Localization.hpp"
 #include "App/Constants.hpp"
 #include "App/GamingExperience.hpp"
+#include "Tools/XboxStartup.hpp"
 #include "AppInstaller.hpp"
 #include "AppInstaller/Zip.hpp"
 #include "Logging/LogManager.hpp"
@@ -197,7 +198,19 @@ namespace AnyFSE
 
     void AppInstaller::ShowXboxModeCheckPage()
     {
-        if (GamingExperience::IsGamingHandheld())
+        // A genuine or already-spoofed handheld needs no action; same for a desktop AnyFSE already patched on an earlier
+        // install. GamingExperience::IsGamingHandheld only checks the registry form; Tools::XboxStartup::IsHandheldDevice
+        // additionally falls back to RtlGetDeviceFamilyInfoEnum, so it catches the same devices plus a couple more.
+        const auto desktop = Tools::XboxStartup::Inspect();
+        if (Tools::XboxStartup::IsHandheldDevice() || desktop.allPatched)
+        {
+            OnInstall();
+            return;
+        }
+
+        // Only offer the patch when AnyFSE recognizes this Windows build's three target DLLs (see docs/desktop-xbox-startup.md).
+        // An unsupported build skips the prompt entirely instead of offering an Enable button that can only fail.
+        if (!desktop.canApply)
         {
             OnInstall();
             return;
@@ -205,18 +218,26 @@ namespace AnyFSE
 
         ShowPage(
             Icon_Permission,
-            Translate(L"settingsChooseHomeApp"),
-            Translate(L"xboxModeCheckDescription"),
-            Translate(L"cancelBtn"), delegate(OnCancel),
+            Translate(L"desktopXboxStartupTitle"),
+            Translate(L"installerXboxStartupDescription"),
+            Translate(L"skipBtn"), delegate(OnInstall),
             Translate(L"enableBtn"), delegate(OnEnableHomeAppSelection));
     }
 
     void AppInstaller::OnEnableHomeAppSelection()
     {
-        if (GamingExperience::EnableGamingHandheld())
+        // This patch is optional: a failure here must not block installing AnyFSE itself, so report it and continue either way.
+        try
         {
-            OnInstall();
+            Tools::XboxStartup::Apply();
         }
+        catch (const std::exception &error)
+        {
+            log.Error("Desktop Xbox startup patch failed during install: %s", error.what());
+            MessageBoxW(m_hDialog, Translate(L"desktopXboxStartupFailed").c_str(),
+                Translate(L"desktopXboxStartupTitle").c_str(), MB_OK | MB_ICONWARNING);
+        }
+        OnInstall();
     }
 
     void AppInstaller::ShowProgressPage()

@@ -15,6 +15,8 @@
   "acceptBtn": "Accept",
   "xboxModeCheckDescription": "Custom Home app selection is disabled. AnyFSE requires the gaming handheld device mode to be enabled.",
   "enableBtn": "Enable",
+  "skipBtn": "Skip",
+  "installerXboxStartupDescription": "This PC is not a gaming handheld, so Windows normally hides Home app selection and Xbox mode at sign-in. AnyFSE can patch gamemode.dll, SettingsHandlers_Gaming.dll, and twinui.pcshell.dll to enable them, without changing your PC's device form factor. Original files are backed up first and can be restored later from Settings. You can enable this at any time after installing, in Settings.",
   "uninstallerWindowTitle": "AnyFSE Uninstaller",
   "uninstallerWelcomeCaption": "Welcome to AnyFSE Uninstaller",
   "uninstallerWelcomeDescription": "This will remove AnyFSE from your system.\n\nClick Uninstall to proceed or Cancel to exit.",

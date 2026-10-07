@@ -6,13 +6,174 @@ implementation is adapted from `victorrjimenezz/XboxStartupEnabler` at commit
 `THIRD_PARTY_NOTICES/XboxStartupEnabler.txt`). No separate .NET application is
 required.
 
+## How the patch works
+
+The code lives in two files:
+
+- [`src/Tools/XboxStartupPlan.cpp`](../src/Tools/XboxStartupPlan.cpp) /
+  [`.hpp`](../src/Tools/XboxStartupPlan.hpp) — the pure, side-effect-free PE
+  engine. `BuildPlan(target, image)` reads a DLL image already loaded into
+  memory (a `std::vector<uint8_t>`) and locates every patch site, refusing if
+  what it finds does not exactly match a known original or already-patched
+  byte sequence. `PatchImage(target, image)` applies the plan and recomputes
+  the PE checksum. Neither function touches the filesystem, the registry, or
+  the running system, which is what `tests/XboxStartupPlanTests.cpp` and
+  `scripts/Test-XboxStartup.ps1` exercise without needing a real Windows
+  install.
+- [`src/Tools/XboxStartup.cpp`](../src/Tools/XboxStartup.cpp) — everything
+  around that: elevation, reading/writing the three real System32 DLLs,
+  backups, the journal, rollback, and the handheld guard. This is the only
+  file that mutates anything, and only through `Apply()`/`Restore()`.
+
+### Why these three DLLs, and what API they gate
+
+Windows exposes the "Gaming Fullscreen Experience" (the Xbox full-screen
+Home/game-mode UI normally reserved for OEM handhelds) through
+`api-ms-win-gaming-experience-l1-1-0.dll`, which forwards to **`gamemode.dll`**
+in `C:\Windows\System32`. Three of its exports matter:
+
+| Export | Role |
+| --- | --- |
+| `IsGamingFullScreenExperienceSupported` | Whether the OS will let the feature be enabled at all. |
+| `CanSetGamingFullScreenExperience` | Whether the current user/session is allowed to toggle it. |
+| `SetGamingFullScreenExperience` | Actually turns it on/off; internally branches on whether the caller is an approved "Home app". |
+
+Two more DLLs independently re-check the device's eligibility before exposing
+UI for it:
+
+- **`SettingsHandlers_Gaming.dll`** backs the Windows Settings > Gaming page
+  (two checks: whether to show the Xbox startup controls at all, and which
+  state to default them to).
+- **`twinui.pcshell.dll`** is part of the shell (`explorer`/`sihost`) and
+  gates the Home-app picker / startup surface shown outside Settings (one
+  check).
+
+All five checks ultimately resolve to the same underlying fact: the device's
+*device form*, obtained via the undocumented `ntdll!RtlGetDeviceFamilyInfoEnum`
+(the same API `IsHandheldDevice()` in `XboxStartup.cpp` calls to decide
+whether patching is even allowed to run — see "Handheld guard" below). OEM
+handhelds report device form **46 (`0x2E`)**; everything the patcher touches
+is a place where compiled code compares a cached copy of that value to `0x2E`
+or calls one of the three `gamemode.dll` exports above. `AnyFSE::App::Constants::HandheldDeviceForm`
+holds the same value `46` for the registry-based guard, confirming it is the
+same enum used system-wide.
+
+### The six patch sites, byte for byte
+
+All offsets below are found dynamically (via the export table or a section
+scan), never hardcoded as fixed file offsets — the bytes themselves are what
+AnyFSE matches against, so the same patch works across Windows builds as long
+as the compiler keeps emitting the same instructions. `-1`/`??` below means
+"any byte accepted" (a register or displacement encoded in that position).
+
+**`gamemode.dll` — 3 sites, resolved via `Target::GameMode`:**
+
+1. **`IsGamingFullScreenExperienceSupported` prologue.**
+   Original: `48 89 5C 24 08 48` → `mov [rsp+8], rbx` (the function's normal
+   stack-home-space prologue, plus the first byte of the next instruction as
+   a loose anchor).
+   Patched: `B8 01 00 00 00 C3` → `mov eax, 1` ; `ret`. The export now
+   unconditionally reports the feature as supported, ignoring whatever logic
+   followed.
+
+2. **`CanSetGamingFullScreenExperience` prologue.**
+   Original: `48 89 5C 24 20 57` → `mov [rsp+20h], rbx` ; `push rdi`.
+   Patched: same `B8 01 00 00 00 C3` stub — unconditionally reports the
+   caller as permitted.
+
+3. **A conditional branch inside `SetGamingFullScreenExperience`.**
+   AnyFSE scans up to 128 bytes past that export's entry point for
+   `84 C0` (`test al, al`) immediately followed by either an unpatched
+   `0F 84 ?? ?? ?? ??` (`je rel32`, a 6-byte near-conditional-jump, called
+   the "home-app branch" in the code/logs) or an already-NOP'd run of six
+   `90` bytes. The 6-byte jump is replaced with six `90` (`nop`) bytes, so
+   execution always falls through past whatever the branch used to skip.
+   Exactly one such site must be found (`sites.size() == 3` is enforced for
+   the whole DLL); more or fewer is treated as an unrecognized layout and
+   refused rather than guessed at.
+
+**`SettingsHandlers_Gaming.dll` (2 sites) and `twinui.pcshell.dll` (1 site) —
+resolved via `Target::Settings` / `Target::Shell`, same pattern, scanned
+across every executable section:**
+
+```
+83 7C 24 ??  2E  0F 94 ??
+```
+
+Disassembled, this 8-byte sequence is two instructions:
+`cmp dword [rsp+disp8], 2Eh` (`83 7C 24 disp8 2E`) followed by
+`sete r/m8` (`0F 94 ModRM`), i.e. *"compare the cached device-form value on
+the stack to 46 (handheld), and set a one-byte register to 1 if it matches."*
+`disp8` and the destination register in the `sete` ModRM byte are accepted as
+any value (`-1`/wildcard) because the compiler is free to pick a different
+stack slot or register per call site; only the opcodes and the literal `0x2E`
+comparand must match.
+
+Patched: `B0+reg 01 90 90 90 90 90 90` → `mov <reg8>, 1` followed by six
+`nop`s padding it back out to the original 8 bytes. The comparison and its
+result are both removed; the register is simply forced to `1` ("yes, this is
+a handheld"), using the *same* register the original `sete` would have
+written to, so nothing downstream that reads that register needs to change.
+`SettingsHandlers_Gaming.dll` must yield exactly 2 such sites and
+`twinui.pcshell.dll` exactly 1; any other count is refused.
+
+### Patched vs. original detection, and why mismatches are refused
+
+`BuildPlan` calls `Resolve()` for each site, which checks, in order:
+
+1. Does the site already hold the *exact* replacement bytes? → already
+   `State::Patched` (this makes apply/detect idempotent and lets `status`
+   report "enabled").
+2. Otherwise, does it hold the *exact* known-original bytes (wildcards
+   aside)? → `State::Original`.
+3. Otherwise → throw. As of the diagnostics added for build robustness, the
+   error names the exact file offset and prints both the expected pattern
+   and the actual bytes found there (e.g.
+   `expected [48 89 5c 24 08 48] ... found [48 89 5c 24 20 48]`), and the
+   DLL/Windows build number are layered on by the callers in
+   `XboxStartup.cpp`. This is what makes a failure on a new Windows build
+   actionable: the log line can be turned directly into a new accepted byte
+   pattern, instead of a dead end. AnyFSE never writes a "best guess" patch
+   over bytes it does not exactly recognize.
+
+A whole-image checksum (`Checksum()`, the standard PE/COFF checksum algorithm)
+is recomputed after patching, matching what the Windows loader and image
+validators expect from a well-formed PE file.
+
+### Handheld guard
+
+Before anything in `Execute()` (used by both `Apply()` and `Restore()`) is
+allowed to touch a file, `IsHandheldDevice()` runs first:
+
+1. Registry: `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\OEM\DeviceForm`
+   == `46`.
+2. If that doesn't say handheld, call `ntdll!RtlGetDeviceFamilyInfoEnum`
+   directly (the same function the patched code paths above compare against)
+   and check whether it reports form `46`.
+3. If neither API is available, **fail closed** (treated as handheld, so
+   patching is refused) rather than assume desktop.
+
+`Apply()` refuses outright on a handheld; `Restore()` is always allowed, so a
+device that was patched and later reclassified (or a spoofed registry entry)
+can still be put back.
+
 ## Enable and test
 
 1. Build/install AnyFSE on a Windows version with the Gaming Fullscreen Experience
    APIs. This does not add those APIs to older Windows builds.
-2. In AnyFSE settings, choose **Enable Xbox startup on PC**. This explicitly patches
-   `gamemode.dll`, `SettingsHandlers_Gaming.dll`, and `twinui.pcshell.dll` through
-   AnyFSE's existing elevated scheduled-task handler.
+2. On a non-handheld PC whose DLLs match a recognized layout, the installer itself
+   offers to apply the patch (`AppInstaller::ShowXboxModeCheckPage` in
+   `src/AppInstaller/AppInstaller_Page.cpp`), right after the license page. It is
+   opt-in: **Skip** continues installing AnyFSE without touching any system file,
+   **Enable** applies the patch (via `Tools::XboxStartup::Apply()`, since the
+   installer already runs elevated) and then continues installing either way, so a
+   patch failure never blocks the AnyFSE install itself. The prompt only appears
+   when `Tools::XboxStartup::Inspect().canApply` is true; a handheld, an
+   already-patched device, or an unrecognized Windows build skips straight past it
+   with no prompt and no system file touched. The same action is always available
+   afterward in AnyFSE settings, choose **Enable Xbox startup on PC**, which calls
+   the same `Tools::XboxStartup::Apply()` through AnyFSE's existing elevated
+   scheduled-task handler and is similarly only enabled once `canApply` is true.
 3. Sign out or restart to load the changed Windows components. The operation does
    not reboot or change startup settings automatically.
 4. Choose your Home app and turn on **Enter FSE on startup** in AnyFSE. For testing
