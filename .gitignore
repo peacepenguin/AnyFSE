@@ -3,3 +3,7 @@ obj
 build
 .vs
 .idea
+
+# Local runtime logs and diagnostic captures (including configuration backups).
+*.log
+/artifacts/
