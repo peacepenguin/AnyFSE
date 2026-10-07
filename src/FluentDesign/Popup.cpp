@@ -43,6 +43,7 @@ namespace FluentDesign
             return;
 
         m_popupItems = items;
+        m_owner = hParent;
         m_selectedIndex = (selectedIndex >= 0 && selectedIndex < (int)items.size()) ? selectedIndex : -1;
         m_originalIndex = m_selectedIndex;
         m_hoveredIndex = -1;
@@ -51,22 +52,25 @@ namespace FluentDesign
         m_nPopupViewHeight = min(m_theme.DpiScale(450), (int)items.size() * m_theme.DpiScale(Layout_ItemHeight));
         m_nPopupContentHeight = (int)items.size() * m_theme.DpiScale(Layout_ItemHeight);
         m_itemPressed = -1;
+        m_panDragging = false;
 
         int popupWidth = width;
         int popupHeight = m_nPopupViewHeight;
 
         MONITORINFO mi{sizeof(MONITORINFO)};
-        int monitorHeight = 2160;
-        int monitorWidth = 3840;
+        if (!GetMonitorInfo(MonitorFromPoint(POINT{x, y}, MONITOR_DEFAULTTONEAREST), &mi))
+            return;
 
-        if (GetMonitorInfo(MonitorFromWindow(m_hWnd, MONITOR_DEFAULTTONEAREST), &mi))
-        {
-            monitorHeight = mi.rcMonitor.bottom - mi.rcMonitor.top;
-            monitorWidth = mi.rcMonitor.right - mi.rcMonitor.left;
-        }
-
-        int dx = (flags & TPM_RIGHTALIGN || x + popupWidth > monitorWidth ) ? -popupWidth : (flags & TPM_CENTERALIGN) ? -popupWidth / 2 : 0;
-        int dy = (flags & TPM_BOTTOMALIGN || y + popupHeight + m_theme.DpiScale(Layout_ItemHeight)  > monitorHeight ) ? -popupHeight : 0;
+        // Screen coordinates may be negative or offset on secondary monitors. Use the
+        // work area, cap the viewport, then clamp both edges so every row is reachable.
+        popupWidth = max(1, min(popupWidth, mi.rcWork.right - mi.rcWork.left));
+        popupHeight = max(1, min(popupHeight, mi.rcWork.bottom - mi.rcWork.top));
+        m_nPopupViewHeight = popupHeight;
+        if (flags & TPM_RIGHTALIGN) x -= popupWidth;
+        else if (flags & TPM_CENTERALIGN) x -= popupWidth / 2;
+        if ((flags & TPM_BOTTOMALIGN) || y + popupHeight > mi.rcWork.bottom) y -= popupHeight;
+        x = max(mi.rcWork.left, min(x, mi.rcWork.right - popupWidth));
+        y = max(mi.rcWork.top, min(y, mi.rcWork.bottom - popupHeight));
 
 
         // Create popup listbox window
@@ -74,14 +78,17 @@ namespace FluentDesign
             WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
             L"LISTBOX",
             L"",
-            WS_CHILD | WS_POPUP | LBS_NOINTEGRALHEIGHT | CS_DROPSHADOW | WS_TABSTOP,
-            x + dx, y + dy,
+            WS_POPUP | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_TABSTOP,
+            x, y,
             popupWidth,
             popupHeight,
             hParent,
             NULL,
             GetModuleHandle(NULL),
             NULL);
+
+        if (!m_hWnd) return;
+        EnablePanGesture();
 
         // Set transparency for shadow
         SetLayeredWindowAttributes(m_hWnd, 0, 255, LWA_COLORKEY);
@@ -113,13 +120,14 @@ namespace FluentDesign
     {
         if (m_popupVisible && m_hWnd)
         {
-            HWND hOwner = GetWindow(m_hWnd, GW_OWNER);
+            HWND hOwner = m_owner;
             m_popupVisible = false;
             m_itemPressed = -1;
+            m_panDragging = false;
             KillTimer(m_hWnd, AnimTimerId);
             DestroyWindow(m_hWnd);
             m_hWnd = NULL;
-            if (hOwner)
+            if (IsWindow(hOwner))
             {
                 InvalidateRect(hOwner, NULL, FALSE);
                 m_theme.SwapFocus(hOwner);
@@ -442,9 +450,39 @@ namespace FluentDesign
         case WM_MOUSEWHEEL:
             This->ScrollByWheel(GET_WHEEL_DELTA_WPARAM(wParam));
             return 0;
+
+        case WM_GESTURE:
+            return This->OnGesture(reinterpret_cast<HGESTUREINFO>(lParam));
         }
 
         return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+    }
+
+    LRESULT Popup::OnGesture(HGESTUREINFO handle)
+    {
+        GESTUREINFO info{};
+        info.cbSize = sizeof(info);
+        if (GetGestureInfo(handle, &info) && info.dwID == GID_PAN)
+        {
+            // Cancel the pending tap before moving content; releasing a swipe must not select a row.
+            m_itemPressed = -1;
+            if (info.dwFlags & GF_BEGIN)
+            {
+                m_panDragging = true;
+                m_panStartPoint = {info.ptsLocation.x, info.ptsLocation.y};
+                m_panStartScrollPos = m_nPopupScrollPos;
+                ScrollTo(m_nPopupScrollPos);
+            }
+            else if (m_panDragging)
+            {
+                ScrollTo(m_panStartScrollPos - (info.ptsLocation.y - m_panStartPoint.y));
+            }
+            m_hoveredIndex = -1;
+            InvalidateRect(m_hWnd, nullptr, FALSE);
+            if (info.dwFlags & GF_END) m_panDragging = false;
+        }
+        CloseGestureInfoHandle(handle);
+        return 0;
     }
 
     // Three items per wheel notch. Scales with the delta so touchpads and high-resolution wheels

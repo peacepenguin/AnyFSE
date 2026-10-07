@@ -74,6 +74,7 @@ namespace FluentDesign
         static const int Layout_CornerRadius = 8;
 
         bool m_popupVisible;
+        HWND m_owner = nullptr;
         int m_selectedIndex;
         int m_originalIndex;
         int m_hoveredIndex;
@@ -82,6 +83,9 @@ namespace FluentDesign
         int m_nPopupViewHeight = 0;
         int m_nPopupContentHeight = 0;
         int m_itemPressed = -1;
+        bool m_panDragging = false;
+        POINT m_panStartPoint{};
+        int m_panStartScrollPos = 0;
 
         static constexpr UINT_PTR AnimTimerId = 1;
         SmoothScroller m_smooth;
@@ -89,6 +93,7 @@ namespace FluentDesign
         void ScrollToSmooth(int newPos);
         void OnAnimTimer();
         void RefreshHover();
+        LRESULT OnGesture(HGESTUREINFO handle);
 
     public:
         Popup(Theme &theme)

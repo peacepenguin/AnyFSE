@@ -28,6 +28,7 @@ namespace Ally::Handlers
         { L"HomeApp", L"Home", Handlers::OpenLibrary },
         { L"TaskSwitcher", L"Task switcher", Handlers::OpenTaskSwitcher },
         { L"TaskSwitcherAlt", L"Task switcher (Win+Tab)", Handlers::OpenTaskSwitcherAlt },
+        { L"AltMenu", L"Alt Menu (ESC)", Handlers::OpenAltMenu },
         { L"Gamebar", L"GameBar", Handlers::OpenGameBar },
         { L"GamebarCommandCenter", L"GameBar Command Center", Handlers::OpenGameBarComandCenter },
         { L"CommandCenter", L"Command Center (Ctrl+Alt+C)", Handlers::OpenComandCenter },
@@ -183,6 +184,11 @@ namespace Ally::Handlers
     void OpenTaskSwitcherAlt()
     {
         SendKeyInput({VK_LWIN, VK_TAB});
+    }
+
+    void OpenAltMenu()
+    {
+        SendKeyInput({VK_ESCAPE});
     }
 
     // {4CE576FA-83DC-4F88-951C-9D0782B4E376}

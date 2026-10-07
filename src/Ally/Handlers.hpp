@@ -33,4 +33,5 @@ namespace Ally::Handlers
     void OpenLibrary();
     void OpenTaskSwitcher();
     void OpenTaskSwitcherAlt();
+    void OpenAltMenu();
 }
