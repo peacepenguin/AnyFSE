@@ -126,7 +126,7 @@ namespace ACSEFilter::Hook
         for (size_t i = 0; i < ARRAYSIZE(specs); ++i)
         {
             const size_t patched = PatchModuleImports(targetModule, &specs[i], 1);
-            LOG(L"Import %S: %zu slots patched", specs[i].functionName, patched);
+            LOG_VERBOSE(L"Import %S: %zu slots patched", specs[i].functionName, patched);
             if (i == 0) reads += patched;
             else completions += patched;
         }
@@ -135,7 +135,7 @@ namespace ACSEFilter::Hook
             LOG(L"Incomplete hook coverage: ReadFile=%zu completion=%zu. ASUS button suppression is not verified.", reads, completions);
             return 1;
         }
-        LOG(L"Read and completion imports patched in ASUS executable. Confirm suppression with button-report logs.");
+        LOG(L"Read and completion imports patched in ASUS executable.");
         CancelPreHookButtonReads();
         return 0;
     }

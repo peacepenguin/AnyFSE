@@ -45,7 +45,7 @@ namespace ACSEFilter
     {
         if (requestedBytes != Config::kExpectedReadLength
             || !IsTargetReport(static_cast<BYTE *>(buffer), actualBytes) || !IsTargetHandle(file)) return;
-        LOG(L"Suppress ASUS button report 0x%02X", static_cast<BYTE *>(buffer)[1]);
+        LOG_VERBOSE(L"Suppress ASUS button report 0x%02X", static_cast<BYTE *>(buffer)[1]);
         CopyMemory(buffer, Config::kReplacementBytes, Config::kExpectedReadLength);
     }
 

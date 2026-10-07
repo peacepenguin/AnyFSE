@@ -35,7 +35,7 @@ namespace ACSEFilter::Startup
                     if (CancelIoEx(file, nullptr))
                     {
                         ++canceled;
-                        LOG(L"Requested cancellation of pre-hook button I/O on handle %p", entry.Handle);
+                        LOG_VERBOSE(L"Requested cancellation of pre-hook button I/O on handle %p", entry.Handle);
                     }
                     else if (const DWORD error = GetLastError(); error != ERROR_NOT_FOUND)
                         LOG(L"Could not cancel pre-hook button I/O on handle %p: %lu", entry.Handle, error);

@@ -1,7 +1,5 @@
 #pragma once
 
-#if 1
-
 #include <windows.h>
 #include <strsafe.h>
 
@@ -98,9 +96,10 @@ namespace ACSEFilter::Debug
 #define LOG(...) ::ACSEFilter::Debug::Log(__VA_ARGS__)
 #define LOG_ERROR(...) ::ACSEFilter::Debug::LogError(__VA_ARGS__)
 
+// Verbose diagnostics are compiled out of Release unless explicitly enabled.
+#if !defined(NDEBUG) || defined(ACSEFILTER_ENABLE_DEBUG_LOG)
+#define LOG_VERBOSE(...) ::ACSEFilter::Debug::Log(__VA_ARGS__)
 #else
-
-#define LOG(...) ((void)0)
-#define LOG_ERROR(...) ((void)0)
+#define LOG_VERBOSE(...) ((void)0)
 
 #endif

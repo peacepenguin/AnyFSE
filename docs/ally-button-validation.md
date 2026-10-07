@@ -44,7 +44,7 @@ page, and the six-byte input-report length. This allows a read issued before the
 hook to complete with `ERROR_OPERATION_ABORTED` and be resubmitted through the hook.
 Cancellation affects pending I/O on that collection, including any pending writes;
 it does not close handles. Capture the `[ACSEFilter]` recovery summary and subsequent
-suppression messages. A cancellation request is not proof that the ASUS reader
+suppression messages (Debug builds only; Release retains startup summaries and failures). A cancellation request is not proof that the ASUS reader
 resumed: confirm multiple presses, other controller functions, and enabling/disabling
 overrides on the installed ASUS version. The named-pipe test cannot establish that
 ASUS-specific recovery behavior. If the descriptor does not match or a query fails,
