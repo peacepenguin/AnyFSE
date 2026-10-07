@@ -26,10 +26,31 @@ prove suppression.
 | Stop the injector service with remapping enabled | The listener starts it again on its next reconciliation, within about ten seconds after the stop completes. |
 | Restart ASUS Optimization | The injector detects the new process and installs the hook again. |
 | Start before the ASUS HID device is enumerated | The listener stays alive and retries registration within about ten seconds. |
+| First Library press after a cold boot, including after waiting a minute | Assigned action runs; Armoury Crate does not open. Repeat several presses to confirm the ASUS reader remains healthy. |
+| Enable overrides while ASUS Optimization is already waiting for input | Hook logs pre-hook I/O recovery; the first and subsequent button presses are suppressed. |
 | Short press, hold, and Mode combinations | Each supported gesture produces its selected action; the conflicting ASUS action does not also run. |
 | Disable extra commands, then reload | Previously enabled extra-command bindings no longer execute. |
 
 ## Filter regression checks
+
+The **Test Pending I/O Recovery** VS Code task runs a Windows named-pipe regression
+test against the same handle-snapshot/cancellation routine used by the hook. It
+checks cancellation of a pre-existing read, preservation of unrelated pending I/O,
+and successful reads after cancellation. The dev-build CI workflow runs it too.
+
+After installing read/completion hooks, the DLL makes a one-time cancellation pass
+over existing handles matching the supported ASUS VID/PIDs, a vendor-defined usage
+page, and the six-byte input-report length. This allows a read issued before the
+hook to complete with `ERROR_OPERATION_ABORTED` and be resubmitted through the hook.
+Cancellation affects pending I/O on that collection, including any pending writes;
+it does not close handles. Capture the `[ACSEFilter]` recovery summary and subsequent
+suppression messages. A cancellation request is not proof that the ASUS reader
+resumed: confirm multiple presses, other controller functions, and enabling/disabling
+overrides on the installed ASUS version. The named-pipe test cannot establish that
+ASUS-specific recovery behavior. If the descriptor does not match or a query fails,
+the handle is left untouched. The pass does not recover synchronous reads or reports
+already consumed before installation, and cannot guarantee cancellation of an I/O
+operation racing completion.
 
 Using a Windows HID/read harness or an instrumented ASUS process, verify:
 

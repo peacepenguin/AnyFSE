@@ -4,6 +4,7 @@
 #include <hidsdi.h>
 #include <map>
 #include <mutex>
+#include "PendingIoRecovery.h"
 
 namespace ACSEFilter
 {
@@ -97,5 +98,23 @@ namespace ACSEFilter
     {
         std::lock_guard<std::mutex> lock(pendingMutex);
         pendingReads.erase(overlapped);
+    }
+
+    void CancelPreHookButtonReads()
+    {
+        // A read submitted before HookReadFile was installed has no buffer in pendingReads.
+        // Cancel it once so the ASUS reader can reissue through the installed hook. Do not
+        // guess buffer addresses from OVERLAPPED or cancel unrelated ASUS device interfaces.
+        Startup::CancelPendingIo([](HANDLE file) {
+            if (!IsTargetHandle(file)) return false;
+            PHIDP_PREPARSED_DATA data = nullptr;
+            if (!HidD_GetPreparsedData(file, &data)) return false;
+            HIDP_CAPS caps{};
+            const NTSTATUS status = HidP_GetCaps(data, &caps);
+            HidD_FreePreparsedData(data);
+            // Keyboard/gamepad collections are excluded. A failed query leaves I/O untouched.
+            return status == HIDP_STATUS_SUCCESS && caps.UsagePage >= 0xFF00
+                && caps.InputReportByteLength == Config::kExpectedReadLength;
+        });
     }
 }

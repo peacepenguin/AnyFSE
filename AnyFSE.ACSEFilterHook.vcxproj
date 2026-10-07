@@ -90,6 +90,7 @@
     <ClInclude Include="src\Ally\ACSEfilter\Config.h" />
     <ClInclude Include="src\Ally\ACSEfilter\DebugLog.h" />
     <ClInclude Include="src\Ally\ACSEfilter\HidReadFilter.h" />
+    <ClInclude Include="src\Ally\ACSEfilter\PendingIoRecovery.h" />
     <ClInclude Include="src\Ally\ACSEfilter\IATHook.h" />
     <ClInclude Include="src\Ally\ACSEfilter\Native.h" />
     <ClInclude Include="src\resource.h" />

@@ -136,6 +136,7 @@ namespace ACSEFilter::Hook
             return 1;
         }
         LOG(L"Read and completion imports patched in ASUS executable. Confirm suppression with button-report logs.");
+        CancelPreHookButtonReads();
         return 0;
     }
 }

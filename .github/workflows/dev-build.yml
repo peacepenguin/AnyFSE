@@ -53,6 +53,8 @@ jobs:
             Write-Host "::error title=Build-Dev.ps1 failed::$text"
             exit 1
           }
+          # Build-Dev has activated the C++ developer environment in this process.
+          ./scripts/Test-PendingIoRecovery.ps1
 
       - name: Collect installer
         shell: pwsh

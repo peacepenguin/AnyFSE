@@ -8,4 +8,5 @@ namespace ACSEFilter
     void CompletePendingRead(HANDLE file, LPOVERLAPPED overlapped, DWORD actualBytes);
     void CompletePendingReadsAfterWait(DWORD count, const HANDLE *handles);
     void DropPendingRead(LPOVERLAPPED overlapped);
+    void CancelPreHookButtonReads();
 }
