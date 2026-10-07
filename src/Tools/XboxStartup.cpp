@@ -16,6 +16,7 @@
 #include "XboxStartup.hpp"
 #include "XboxStartupPlan.hpp"
 #include "Tools/Unicode.hpp"
+#include "Tools/Registry.hpp"
 #include "App/Constants.hpp"
 #include "Logging/LogManager.hpp"
 
@@ -318,6 +319,10 @@ namespace AnyFSE::Tools::XboxStartup
         }
         void Execute(bool restore)
         {
+            // Enforce at the mutation boundary, including elevated and CLI invocations.
+            // Restoration remains available for previously modified handhelds.
+            if (!restore && IsHandheldDevice())
+                throw std::runtime_error("Desktop Xbox startup patches are disabled on handheld devices");
             Privilege takeOwnership(SE_TAKE_OWNERSHIP_NAME);
             Privilege restoreOwnership(SE_RESTORE_NAME);
             const auto directory = SystemDirectory(), backups = BackupDirectory();
@@ -410,6 +415,20 @@ namespace AnyFSE::Tools::XboxStartup
             RecoveryRecord(journal, L"COMPLETED");
         }
     }
+    bool IsHandheldDevice()
+    {
+        // Block both real handhelds and registry-spoofed handhelds. A backup marker
+        // is not sufficient evidence that a device is physically a desktop.
+        if (Registry::ReadDWORD(c::DeviceFormRegKey, c::DeviceFormRegValue) == c::HandheldDeviceForm)
+            return true;
+        using QueryDeviceForm = VOID (NTAPI *)(ULONGLONG *, DWORD *, DWORD *);
+        const auto ntdll = GetModuleHandleW(L"ntdll.dll");
+        const auto query = ntdll ? reinterpret_cast<QueryDeviceForm>(GetProcAddress(ntdll, "RtlGetDeviceFamilyInfoEnum")) : nullptr;
+        if (!query) return true; // Fail closed when Windows device classification is unavailable.
+        DWORD form = 0;
+        query(nullptr, nullptr, &form);
+        return form == c::HandheldDeviceForm;
+    }
     Status Inspect()
     {
         Status status;
@@ -448,6 +467,11 @@ namespace AnyFSE::Tools::XboxStartup
         {
             status.allPatched = status.canApply = status.canRestore = false;
             status.details = Unicode::to_wstring(error.what());
+        }
+        if (IsHandheldDevice())
+        {
+            status.canApply = false;
+            status.details += L"Desktop patch application disabled: handheld device or unavailable device classification.\n";
         }
         status.canRestore &= status.anyPatched;
         return status;

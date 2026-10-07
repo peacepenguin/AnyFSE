@@ -347,12 +347,12 @@ namespace AnyFSE::App::AppSettings::Settings::Page
     {
         const auto desktop = Tools::XboxStartup::Inspect();
         const bool available = GamingExperience::IsGamingHandheld() || desktop.allPatched;
-        const bool legacySpoof = Registry::ValueExists(c::DeviceFormRegKey, c::DeviceFormBackupRegValue);
-        m_pHomeAppSelectionLine->Show(!available || (legacySpoof && !desktop.allPatched));
+        const bool handheld = Tools::XboxStartup::IsHandheldDevice();
+        m_pHomeAppSelectionLine->Show(!handheld && !available);
         m_pHomeAppSelectionLine->SetDescription(desktop.canApply
             ? Translate(L"settingsDesktopXboxStartupDescription")
             : Translate(L"settingsDesktopXboxStartupUnsupported") + L"\n" + desktop.details);
-        m_enableHomeAppSelectionButton.Enable(desktop.canApply);
+        m_enableHomeAppSelectionButton.Enable(!handheld && desktop.canApply);
         m_pRestoreDesktopXboxStartupLine->Show(desktop.anyPatched);
         m_restoreDesktopXboxStartupButton.Enable(desktop.canRestore);
         m_pLauncherLine->Show(available);

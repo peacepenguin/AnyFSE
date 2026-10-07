@@ -109,3 +109,9 @@ The DLL journal does not cover independent launcher, Home app, startup, Ally-but
 or installer settings. Record their prior values before testing and restore those
 settings separately. Restore DLL changes before uninstalling AnyFSE; retain backups
 and journals until testing is finished.
+Desktop patch application is blocked for devices identified as gaming handhelds by
+either the OEM registry form or Windows' `RtlGetDeviceFamilyInfoEnum` query. This
+also blocks existing registry-spoofed handhelds, even if an AnyFSE backup marker is
+present. Missing query support blocks application conservatively. The guard runs
+before privileges, backups, permission changes, or DLL replacements and covers the
+UI, CLI, and elevated handler. Restore remains available to undo earlier patches.
