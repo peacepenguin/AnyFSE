@@ -15,6 +15,7 @@ Some other launchers potentially can be supported too with minor customizations
 
 - Way how to create home app was inspired by @driver1998 work [FullScreenExperienceShell](https://github.com/driver1998/FullScreenExperienceShell). Also thanks to discord user 'silicon' who show me that project.
 - Handling of ASUS Rog Ally buttons inspired by such projects like [Handheld Companion](https://github.com/Valkirie/HandheldCompanion) and [g-helper](https://github.com/seerge/g-helper).
+- Desktop Xbox startup (Home app selection without a handheld) is adapted from @victorrjimenezz work [XboxStartupEnabler](https://github.com/victorrjimenezz/XboxStartupEnabler) (MIT).
 - Discord users 'Marecki' and 'TwoTracks' who helped me to design and test such features like Xbox Ally support and Steam buttons mapping.
 - All users submitted me Localization files.
 
@@ -129,7 +130,10 @@ Also AnyFSE Installer itself does trick to install AnyFSE package to be register
 ## Install, Configure and Uninstall
 
 > [!NOTE]
-> AnyFSE is not implement enabling FSE mode support in windows. It is require either supported Handheld device like ASUS ROG Ally or enabling this mode on other devices using "Enabler" tool e.g. [XboxFullscreenExperienceTool](https://github.com/8bit2qubit/XboxFullscreenExperienceTool).
+> AnyFSE can now enable FSE mode (Home app selection and Xbox mode at sign-in) on desktops and other non-handheld PCs.
+> Supported handhelds like the ASUS ROG Ally need nothing extra. On other PCs the installer offers to patch the Windows
+> components that hide this mode, and you can enable it later from AnyFSE settings. A restart is required after patching.
+> See [Desktop Xbox startup](#desktop-xbox-startup).
 
 ### How to install
 
@@ -191,9 +195,28 @@ You can specify custom position of loop via filename. To do this - name should c
 - '4000' and '5000' position in milliseconds from start of video to rewind to during loop.
 
 
-## Desktop Xbox startup testing
+## Desktop Xbox startup
 
-AnyFSE integrates XboxStartupEnabler to enable Home app selection and Xbox mode at sign-in
-without spoofing your PC's device form factor. Use **Enable Xbox startup on PC** in settings,
-then sign out or restart. This is an explicit system-file patch with compatibility checks
-and matching-backup restoration. See [desktop Xbox startup](docs/desktop-xbox-startup.md).
+AnyFSE builds on [XboxStartupEnabler](https://github.com/victorrjimenezz/XboxStartupEnabler) to enable Home app
+selection and Xbox mode at sign-in **without spoofing your PC's device form factor** in the registry. Spoofing tells
+every Windows component the PC is a handheld, which can affect power profiles and thermal limits; AnyFSE instead patches
+only the handheld checks in `gamemode.dll`, `SettingsHandlers_Gaming.dll`, `twinui.pcshell.dll` and, on newer builds,
+`SettingsEnvironment.Desktop.dll`.
+
+- **Enable:** accept the offer during install, or use **Enable Xbox startup on PC** in AnyFSE settings, then restart.
+- **Restore:** use **Restore originals** in AnyFSE settings. Uninstalling also restores them and offers a restart.
+- **Survives Windows updates:** AnyFSE settings always show the current state. If Windows Update or `sfc` replaces the
+  files, you can re-enable from settings.
+
+Beyond the upstream patcher, AnyFSE can handle **unverified DLLs**, meaning Windows builds whose code layout hasn't been
+validated yet:
+
+- It finds handheld checks by following the Windows device-form API (`RtlGetDeviceFamilyInfoEnum`) to where its result
+  is compared, rather than matching one fixed byte pattern, so moved or recompiled checks are still found.
+- It can stub gaming exports with unfamiliar prologues when that is structurally safe.
+- Sites found this way are never applied automatically. AnyFSE settings list exactly what would change and apply them
+  only after you confirm.
+- `AnyFSE.exe /XboxStartup status`, `scan` and `apply-unverified` support diagnostics.
+
+Every change is backed up and verified before any system file is replaced. See
+[desktop Xbox startup](docs/desktop-xbox-startup.md) for the full design.
