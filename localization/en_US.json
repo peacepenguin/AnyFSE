@@ -177,6 +177,7 @@
   "settingsSplashSimplifiedSwitchDescription": "Show only the animated logo when switching modes",
   "settingsAllyFeatures": "ASUS ROG Ally features",
   "settingsAllyFeaturesDescription": "Experimental customization for ASUS handhelds",
+  "settingsAllyFeaturesUnavailableDescription": "Available only on ASUS ROG Ally handhelds; no supported device detected",
   "settingsAllyEnableAlternativeButtons": "Enable alternative ASUS ROG Ally button handling",
   "settingsAllyEnableAlternativeButtonsDescription": "Alternative handling for some ASUS Optimization service actions",
   "settingsAllyPressArmouryCrate": "PRESS Armoury Crate button",

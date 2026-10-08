@@ -13,6 +13,15 @@ namespace AnyFSE::App::AppSettings::Settings::Page
     {
         if (!Ally::IsSupported())
         {
+            // No ROG Ally present: show the entry grayed out so the feature is discoverable, but do not wire up navigation
+            // or build the button-mapping sub-page (there is no device to bind).
+            SettingsLine & unavailable = m_dialog.AddSettingsLine(settingPageList, top,
+                Translate(L"settingsAllyFeatures"),
+                Translate(L"settingsAllyFeaturesUnavailableDescription"),
+                Layout::LineHeight, Layout::LinePadding, 0
+            );
+            unavailable.SetIcon(L"@B9ECED6F.ASUSCommandCenter_qmba6cd70vzyy");
+            unavailable.Disable();
             return;
         }
 
