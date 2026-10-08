@@ -12,6 +12,8 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <!-- Zydis and Zycore are compiled into each binary from src/Tools/zydis (vendored amalgamation), not used as DLLs. -->
+      <PreprocessorDefinitions>ZYDIS_STATIC_BUILD;ZYCORE_STATIC_BUILD;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">

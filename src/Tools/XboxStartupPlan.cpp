@@ -2,7 +2,9 @@
 // See THIRD_PARTY_NOTICES/XboxStartupEnabler.txt.
 #include "XboxStartupPlan.hpp"
 #include "App/Constants.hpp"
+#include "zydis/Zydis.h"
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <limits>
 #include <stdexcept>
@@ -201,6 +203,22 @@ namespace AnyFSE::Tools::XboxStartup
                 }
                 return slots;
             }
+            // File-offset [begin, end) of every RUNTIME_FUNCTION, in table order. These are the only ranges holding code; a linear
+            // decode started at each true function entry stays aligned, where a sweep from a section base could desync on padding.
+            std::vector<std::pair<std::size_t, std::size_t>> Functions() const
+            {
+                std::vector<std::pair<std::size_t, std::size_t>> result;
+                if (!exceptionRva || !exceptionSize || exceptionSize % 12) return result;
+                const auto table = Offset(exceptionRva, exceptionSize);
+                for (std::size_t i = 0; i < exceptionSize; i += 12)
+                {
+                    const auto begin = U32(table + i), end = U32(table + i + 4);
+                    if (begin >= end) continue;
+                    const auto off = Offset(begin, end - begin);
+                    if (IsCode(off, end - begin)) result.emplace_back(off, off + (end - begin));
+                }
+                return result;
+            }
             // File-offset bounds of the RUNTIME_FUNCTION containing `off`, or {0, 0} when none does.
             std::pair<std::size_t, std::size_t> Function(std::size_t off) const
             {
@@ -286,35 +304,130 @@ namespace AnyFSE::Tools::XboxStartup
             std::snprintf(text, sizeof(text), "%zx", value);
             return text;
         }
-        // Overwriting an entry with `mov eax,1; ret` is safe for any prologue when the entry starts a real x64 function that is
-        // long enough and no relative branch lands inside the overwritten bytes. Branch decoding is byte-level, so a false match
-        // can only refuse a patch, never allow one.
+        // One decoded instruction with its file offset and runtime (RVA-based) address.
+        struct Insn
+        {
+            std::size_t offset = 0;
+            ZyanU64 address = 0;
+            ZydisDecodedInstruction instruction{};
+            std::array<ZydisDecodedOperand, ZYDIS_MAX_OPERAND_COUNT> operands{};
+        };
+        const ZydisDecoder& Decoder()
+        {
+            static const ZydisDecoder decoder = [] {
+                ZydisDecoder value;
+                ZydisDecoderInit(&value, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
+                return value;
+            }();
+            return decoder;
+        }
+        // Linear decode of one x64 function. Started at a real RUNTIME_FUNCTION entry, every instruction is aligned; a failed
+        // decode (padding or embedded data) ends the walk rather than resyncing, so nothing downstream sees a misaligned stream.
+        std::vector<Insn> Decode(const Pe& pe, const Bytes& image, std::size_t begin, std::size_t end)
+        {
+            std::vector<Insn> result;
+            for (std::size_t off = begin; off < end;)
+            {
+                Insn insn;
+                insn.offset = off;
+                insn.address = pe.Rva(off);
+                if (!ZYAN_SUCCESS(ZydisDecoderDecodeFull(&Decoder(), image.data() + off, end - off,
+                    &insn.instruction, insn.operands.data()))) break;
+                off += insn.instruction.length;
+                result.push_back(insn);
+            }
+            return result;
+        }
+        bool WritesRegister(const Insn& insn, ZydisRegister reg)
+        {
+            const auto enclosing = ZydisRegisterGetLargestEnclosing(ZYDIS_MACHINE_MODE_LONG_64, reg);
+            for (ZyanU8 i = 0; i < insn.instruction.operand_count; ++i)
+            {
+                const auto& op = insn.operands[i];
+                if (op.type == ZYDIS_OPERAND_TYPE_REGISTER && (op.actions & ZYDIS_OPERAND_ACTION_MASK_WRITE)
+                    && ZydisRegisterGetLargestEnclosing(ZYDIS_MACHINE_MODE_LONG_64, op.reg.value) == enclosing)
+                    return true;
+            }
+            return false;
+        }
+        // Encodes `instruction` at `address`, then fills the rest of `length` bytes with NOPs. Used so a rewrite is the exact
+        // encoding the assembler would emit for any register or branch distance, not a hand-built byte string.
+        bool Encode(ZydisEncoderRequest& request, ZyanU64 address, std::size_t length, Bytes& out)
+        {
+            std::array<ZyanU8, ZYDIS_MAX_INSTRUCTION_LENGTH> buffer{};
+            ZyanUSize size = buffer.size();
+            if (!ZYAN_SUCCESS(ZydisEncoderEncodeInstructionAbsolute(&request, buffer.data(), &size, address)) || size > length)
+                return false;
+            out.assign(buffer.begin(), buffer.begin() + size);
+            out.resize(length, 0x90);
+            if (length > size && !ZYAN_SUCCESS(ZydisEncoderNopFill(out.data() + size, length - size))) return false;
+            return true;
+        }
+        bool EncodeMovImm8(ZydisRegister reg, std::uint8_t value, ZyanU64 address, std::size_t length, Bytes& out)
+        {
+            ZydisEncoderRequest request{};
+            request.machine_mode = ZYDIS_MACHINE_MODE_LONG_64;
+            request.mnemonic = ZYDIS_MNEMONIC_MOV;
+            request.operand_count = 2;
+            request.operands[0].type = ZYDIS_OPERAND_TYPE_REGISTER;
+            request.operands[0].reg.value = reg;
+            request.operands[1].type = ZYDIS_OPERAND_TYPE_IMMEDIATE;
+            request.operands[1].imm.u = value;
+            return Encode(request, address, length, out);
+        }
+        bool EncodeJmp(ZyanU64 target, ZyanU64 address, std::size_t length, Bytes& out)
+        {
+            // Prefer the shortest branch that reaches the target and fits the region (rel8, then rel32), as the assembler would.
+            for (const auto width : {ZYDIS_BRANCH_WIDTH_8, ZYDIS_BRANCH_WIDTH_32})
+            {
+                ZydisEncoderRequest request{};
+                request.machine_mode = ZYDIS_MACHINE_MODE_LONG_64;
+                request.mnemonic = ZYDIS_MNEMONIC_JMP;
+                request.branch_type = ZYDIS_BRANCH_TYPE_NEAR;
+                request.branch_width = width;
+                request.operand_count = 1;
+                request.operands[0].type = ZYDIS_OPERAND_TYPE_IMMEDIATE;
+                request.operands[0].imm.u = target;
+                if (Encode(request, address, length, out)) return true;
+            }
+            return false;
+        }
+        std::string Describe(const ZydisDecodedInstruction& instruction, const ZydisDecodedOperand* operands, ZyanU64 address)
+        {
+            char text[96] = {};
+            static const ZydisFormatter& formatter = [] {
+                static ZydisFormatter value;
+                ZydisFormatterInit(&value, ZYDIS_FORMATTER_STYLE_INTEL);
+                return value;
+            }();
+            if (!ZYAN_SUCCESS(ZydisFormatterFormatInstruction(&formatter, &instruction, operands,
+                instruction.operand_count_visible, text, sizeof(text), address, nullptr)))
+                return "<unformattable>";
+            return text;
+        }
+        // Overwriting an export entry with `mov eax,1; ret` is safe only when the entry is a real function entry, the function is
+        // long enough, and no instruction in the image branches into the bytes being overwritten. Branch targets are resolved by
+        // the disassembler, so a misread cannot approve an unsafe stub.
         bool SafeEntryStub(const Pe& pe, const Bytes& image, std::size_t off, std::size_t length)
         {
             const auto function = pe.Function(off);
             if (!function.second) return false;
             if (function.first != off && !(function.first + 4 == off && Match(image, function.first, {0xF3, 0x0F, 0x1E, 0xFA}))) return false;
             if (function.second - off < length) return false;
-            const std::int64_t entry = pe.Rva(off);
-            for (const auto& range : pe.Code())
-            {
-                const std::int64_t base = pe.Rva(range.first);
-                const auto end = range.first + range.second;
-                for (std::size_t i = range.first; i < end; ++i)
+            const ZyanU64 entry = pe.Rva(off);
+            for (const auto& range : pe.Functions())
+                for (const auto& insn : Decode(pe, image, range.first, range.second))
                 {
-                    const auto op = image[i];
-                    std::size_t size = 0;
-                    if (op == 0xE8 || op == 0xE9) size = 5;
-                    else if (op == 0xEB || (op >= 0x70 && op <= 0x7F)) size = 2;
-                    else if (op == 0x0F && i + 1 < end && image[i + 1] >= 0x80 && image[i + 1] <= 0x8F) size = 6;
-                    else continue;
-                    if (i + size > end) continue;
-                    const std::int64_t relative = size == 2 ? std::int64_t(std::int8_t(image[i + 1]))
-                        : std::int64_t(std::int32_t(pe.U32(i + size - 4)));
-                    const auto destination = base + std::int64_t(i - range.first) + std::int64_t(size) + relative;
-                    if (destination > entry && destination < entry + std::int64_t(length)) return false;
+                    if (!(insn.instruction.attributes & ZYDIS_ATTRIB_IS_RELATIVE)) continue;
+                    for (ZyanU8 i = 0; i < insn.instruction.operand_count; ++i)
+                    {
+                        if (insn.operands[i].type != ZYDIS_OPERAND_TYPE_IMMEDIATE || !insn.operands[i].imm.is_relative) continue;
+                        ZyanU64 destination = 0;
+                        if (ZYAN_SUCCESS(ZydisCalcAbsoluteAddress(&insn.instruction, &insn.operands[i], insn.address, &destination))
+                            && destination > entry && destination < entry + length)
+                            return false;
+                    }
                 }
-            }
             return true;
         }
         Site ResolveExport(const Pe& pe, const Bytes& image, const char *name, const std::vector<int>& original, const Bytes& replacement,
@@ -332,129 +445,109 @@ namespace AnyFSE::Tools::XboxStartup
                     + Dump(image, off, replacement.size()) + "] -> mov eax,1; ret"};
             return Resolve(image, off, original, replacement);
         }
-        // Stack slot named by a ModRM memory operand: [rsp+disp] through SIB 0x24, or [rbp+disp].
-        struct Slot { bool rbp = false; std::int32_t disp = 0; };
-        bool Operand(const Bytes& image, std::size_t modrm, Slot& slot, std::size_t& length)
+        bool IsStackMemory(const ZydisDecodedOperand& op)
         {
-            if (modrm >= image.size()) return false;
-            const auto mod = image[modrm] >> 6, rm = image[modrm] & 7;
-            if (mod != 1 && mod != 2) return false;
-            auto at = modrm + 1;
-            if (rm == 4)
-            {
-                if (at >= image.size() || image[at] != 0x24) return false;
-                slot.rbp = false;
-                ++at;
-            }
-            else if (rm == 5) slot.rbp = true;
-            else return false;
-            if (mod == 1)
-            {
-                if (at >= image.size()) return false;
-                slot.disp = std::int8_t(image[at++]);
-            }
-            else
-            {
-                if (at + 4 > image.size()) return false;
-                slot.disp = std::int32_t(image[at] | (std::uint32_t(image[at + 1]) << 8) | (std::uint32_t(image[at + 2]) << 16)
-                    | (std::uint32_t(image[at + 3]) << 24));
-                at += 4;
-            }
-            length = at - modrm;
-            return true;
+            return op.type == ZYDIS_OPERAND_TYPE_MEMORY && op.mem.index == ZYDIS_REGISTER_NONE
+                && (op.mem.base == ZYDIS_REGISTER_RSP || op.mem.base == ZYDIS_REGISTER_RBP);
         }
-        std::string Describe(const Slot& slot)
+        bool SameStackSlot(const ZydisDecodedOperand& a, const ZydisDecodedOperand& b)
         {
-            const auto magnitude = slot.disp < 0 ? std::size_t(-std::int64_t(slot.disp)) : std::size_t(slot.disp);
-            return std::string(slot.rbp ? "[rbp" : "[rsp") + (slot.disp < 0 ? "-0x" : "+0x") + Hex(magnitude) + "]";
+            // Same stack location is base + displacement; access size differs (the LEA that takes its address versus the later
+            // dword compare), so size is deliberately not compared.
+            return IsStackMemory(a) && IsStackMemory(b) && a.mem.base == b.mem.base && a.mem.disp.value == b.mem.disp.value;
         }
-        // Follows one RtlGetDeviceFamilyInfoEnum call to the compare of its device-form output against the handheld form.
-        void FollowFormCall(const Pe& pe, const Bytes& image, std::size_t call, std::size_t callEnd, std::vector<Finding>& findings)
+        // Follows one RtlGetDeviceFamilyInfoEnum call to the compare of its device-form output against the handheld form, then to
+        // the instruction that consumes the compare. All register and memory tracking is on decoded operands, so register choice,
+        // addressing mode and displacement width do not matter; only the data flow does.
+        void FollowFormCall(const Pe& pe, const Bytes& image, const std::vector<Insn>& function, std::size_t callIndex,
+            std::vector<Finding>& findings)
         {
-            const auto function = pe.Function(call);
-            if (!function.second) return;
-            // The form output is the third argument: find the closest `lea r8,[slot]` and require that r8 is not rewritten after it.
-            Slot slot;
-            std::size_t leaEnd = 0;
-            const auto backLimit = (std::max)(function.first, call > 0x40 ? call - 0x40 : std::size_t{0});
-            for (std::size_t i = call; i-- > backLimit;)
+            // The device-form output is the third integer argument (R8): a pointer the callee writes through. Require the nearest
+            // preceding write to R8 to be `lea r8, [stack slot]`, and that R8 is not rewritten again before the call.
+            ZydisDecodedOperand slot{};
+            for (std::size_t i = callIndex; i-- > 0;)
             {
-                std::size_t length = 0;
-                if (image[i] == 0x4C && image[i + 1] == 0x8D && (image[i + 2] & 0x38) == 0 && Operand(image, i + 2, slot, length)
-                    && i + 2 + length <= call) { leaEnd = i + 2 + length; break; }
+                if (!WritesRegister(function[i], ZYDIS_REGISTER_R8)) continue;
+                if (function[i].instruction.mnemonic != ZYDIS_MNEMONIC_LEA || !IsStackMemory(function[i].operands[1])) return;
+                slot = function[i].operands[1];
+                for (std::size_t j = i + 1; j < callIndex; ++j)
+                    if (WritesRegister(function[j], ZYDIS_REGISTER_R8)) return;
+                break;
             }
-            if (!leaEnd) return;
-            for (std::size_t i = leaEnd; i + 3 <= call; ++i)
-                if (((image[i] == 0x45 || image[i] == 0x4D) && image[i + 1] == 0x33 && image[i + 2] == 0xC0)
-                    || ((image[i] == 0x4C || image[i] == 0x4D) && image[i + 1] == 0x8B && (image[i + 2] & 0xF8) == 0xC0)) return;
-            if (Match(image, callEnd, {0x0F, 0x1F, 0x44, 0x00, 0x00})) callEnd += 5;
-            const auto windowEnd = (std::min)(function.second, callEnd + 0x40);
-            for (std::size_t i = callEnd; i + 3 <= windowEnd; ++i)
+            if (slot.type != ZYDIS_OPERAND_TYPE_MEMORY) return;
+
+            // Registers currently holding a copy of the form value, seeded with the memory slot itself.
+            std::vector<ZydisRegister> holders;
+            for (std::size_t i = callIndex + 1; i < function.size(); ++i)
             {
-                Slot read;
-                std::size_t length = 0, compare = 0, compareLength = 0;
-                std::string form;
-                if (image[i] == 0x83 && (image[i + 1] & 0x38) == 0x38 && Operand(image, i + 1, read, length) && read.rbp == slot.rbp
-                    && read.disp == slot.disp && i + 1 + length < windowEnd && image[i + 1 + length] == 0x2E)
-                {
-                    compare = i;
-                    compareLength = 2 + length;
-                    form = "cmp dword " + Describe(slot) + ",0x2E";
-                }
-                else if (image[i] == 0x8B && Operand(image, i + 1, read, length) && read.rbp == slot.rbp && read.disp == slot.disp)
-                {
-                    const auto reg = (image[i + 1] >> 3) & 7;
-                    const auto next = i + 1 + length;
-                    if (next + 3 > windowEnd || image[next] != 0x83 || image[next + 1] != 0xF8 + reg || image[next + 2] != 0x2E) continue;
-                    compare = next;
-                    compareLength = 3;
-                    form = "mov r32," + Describe(slot) + "; cmp r32,0x2E";
-                }
-                else continue;
-                const auto use = compare + compareLength;
-                Finding finding{compare, false, "+0x" + Hex(compare) + ": " + form};
-                const auto jump = [&](std::size_t size)
-                {
-                    const std::int64_t relative = size == 2 ? std::int64_t(std::int8_t(image[use + 1]))
-                        : std::int64_t(std::int32_t(pe.U32(use + 2)));
-                    const auto destination = std::int64_t(pe.Rva(use)) + std::int64_t(size) + relative;
-                    const auto total = compareLength + size;
-                    if (destination < 0 || destination > (std::numeric_limits<std::uint32_t>::max)()
-                        || !pe.IsCode(pe.Offset(static_cast<std::uint32_t>(destination)), 1)) return;
-                    const auto fromShort = destination - (std::int64_t(pe.Rva(compare)) + 2);
-                    const auto fromNear = destination - (std::int64_t(pe.Rva(compare)) + 5);
-                    if (fromShort >= -128 && fromShort <= 127)
-                        finding.replacement = {0xEB, static_cast<std::uint8_t>(fromShort)};
-                    else if (total >= 5)
-                        finding.replacement = {0xE9, static_cast<std::uint8_t>(fromNear), static_cast<std::uint8_t>(fromNear >> 8),
-                            static_cast<std::uint8_t>(fromNear >> 16), static_cast<std::uint8_t>(fromNear >> 24)};
-                    else return;
-                    finding.replacement.resize(total, 0x90);
-                    finding.patchable = true;
-                    finding.description += "; je -> jmp (always take the handheld branch)";
+                const auto& insn = function[i];
+                const auto& mn = insn.instruction.mnemonic;
+                const auto held = [&](const ZydisDecodedOperand& op) {
+                    if (SameStackSlot(op, slot)) return true;
+                    if (op.type != ZYDIS_OPERAND_TYPE_REGISTER) return false;
+                    const auto enclosing = ZydisRegisterGetLargestEnclosing(ZYDIS_MACHINE_MODE_LONG_64, op.reg.value);
+                    return std::find(holders.begin(), holders.end(), enclosing) != holders.end();
                 };
-                if (use + 3 <= windowEnd && image[use] == 0x0F && (image[use + 1] == 0x94 || image[use + 1] == 0x95)
-                    && (image[use + 2] & 0xF8) == 0xC0)
+                // A store into the slot (other than the call's own write) means the value is gone; stop.
+                if (insn.operands[0].type == ZYDIS_OPERAND_TYPE_MEMORY && SameStackSlot(insn.operands[0], slot)
+                    && (insn.operands[0].actions & ZYDIS_OPERAND_ACTION_MASK_WRITE)) return;
+                // Copy of the form value into a register: track it.
+                if ((mn == ZYDIS_MNEMONIC_MOV || mn == ZYDIS_MNEMONIC_MOVZX || mn == ZYDIS_MNEMONIC_MOVSX)
+                    && insn.operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER && held(insn.operands[1]))
                 {
-                    const auto reg = image[use + 2] & 7;
-                    const bool equal = image[use + 1] == 0x94;
-                    finding.replacement = {static_cast<std::uint8_t>(0xB0 + reg), static_cast<std::uint8_t>(equal ? 1 : 0)};
-                    finding.replacement.resize(compareLength + 3, 0x90);
-                    finding.patchable = true;
-                    finding.description += equal ? "; sete -> mov reg8,1" : "; setne -> mov reg8,0";
-                    finding.known = Match(image, compare, {0x83, 0x7C, 0x24, -1, 0x2E, 0x0F, 0x94, -1});
+                    holders.push_back(ZydisRegisterGetLargestEnclosing(ZYDIS_MACHINE_MODE_LONG_64, insn.operands[0].reg.value));
+                    continue;
                 }
-                else if (use + 2 <= windowEnd && image[use] == 0x74) jump(2);
-                else if (use + 6 <= windowEnd && image[use] == 0x0F && image[use + 1] == 0x84) jump(6);
-                else if ((use + 2 <= windowEnd && image[use] == 0x75) || (use + 6 <= windowEnd && image[use] == 0x0F && image[use + 1] == 0x85))
+                if (mn == ZYDIS_MNEMONIC_CMP && insn.operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE
+                    && insn.operands[1].imm.value.u == c::HandheldDeviceForm && held(insn.operands[0]))
                 {
-                    finding.replacement.assign(compareLength + (image[use] == 0x75 ? 2 : 6), 0x90);
-                    finding.patchable = true;
-                    finding.description += "; jne -> nop (fall through to the handheld path)";
+                    const auto consumer = i + 1 < function.size() ? &function[i + 1] : nullptr;
+                    Finding finding{insn.offset, false, "+0x" + Hex(insn.offset) + ": "
+                        + Describe(insn.instruction, insn.operands.data(), insn.address)};
+                    const auto region = consumer ? consumer->offset + consumer->instruction.length - insn.offset : insn.instruction.length;
+                    if (consumer && (consumer->instruction.mnemonic == ZYDIS_MNEMONIC_SETZ
+                        || consumer->instruction.mnemonic == ZYDIS_MNEMONIC_SETNZ)
+                        && consumer->operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER)
+                    {
+                        const bool equal = consumer->instruction.mnemonic == ZYDIS_MNEMONIC_SETZ;
+                        finding.patchable = EncodeMovImm8(consumer->operands[0].reg.value, equal ? 1 : 0, insn.address, region,
+                            finding.replacement);
+                        finding.description += "; " + Describe(consumer->instruction, consumer->operands.data(), consumer->address)
+                            + (equal ? " -> mov reg,1" : " -> mov reg,0");
+                        // The validated layout: cmp dword [rsp+disp],2Eh ; sete r8. Keep it verified so it needs no confirmation.
+                        finding.known = Match(image, insn.offset, {0x83, 0x7C, 0x24, -1, 0x2E, 0x0F, 0x94, -1});
+                    }
+                    else if (consumer && consumer->instruction.mnemonic == ZYDIS_MNEMONIC_JZ
+                        && consumer->operands[0].type == ZYDIS_OPERAND_TYPE_IMMEDIATE && consumer->operands[0].imm.is_relative)
+                    {
+                        ZyanU64 destination = 0;
+                        if (ZYAN_SUCCESS(ZydisCalcAbsoluteAddress(&consumer->instruction, &consumer->operands[0], consumer->address,
+                            &destination)) && destination <= (std::numeric_limits<std::uint32_t>::max)()
+                            && pe.IsCode(pe.Offset(static_cast<std::uint32_t>(destination)), 1))
+                        {
+                            finding.patchable = EncodeJmp(destination, insn.address, region, finding.replacement);
+                            finding.description += "; jz -> jmp (always take the handheld branch)";
+                        }
+                    }
+                    else if (consumer && consumer->instruction.mnemonic == ZYDIS_MNEMONIC_JNZ)
+                    {
+                        finding.replacement.assign(region, 0x90);
+                        finding.patchable = true;
+                        finding.description += "; jnz -> nop (fall through to the handheld path)";
+                    }
+                    if (!finding.patchable)
+                        finding.description += consumer ? "; result used by " + Describe(consumer->instruction, consumer->operands.data(),
+                            consumer->address) + ", unsupported shape, not patched" : "; no consumer found, not patched";
+                    findings.push_back(finding);
+                    return;
                 }
-                if (!finding.patchable) finding.description += "; result used by [" + Dump(image, use, 4) + "], unsupported shape, not patched";
-                findings.push_back(finding);
-                return;
+                // The form value's register was overwritten by something other than a tracked copy: drop it.
+                if (insn.operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER && (insn.operands[0].actions & ZYDIS_OPERAND_ACTION_MASK_WRITE))
+                {
+                    const auto enclosing = ZydisRegisterGetLargestEnclosing(ZYDIS_MACHINE_MODE_LONG_64, insn.operands[0].reg.value);
+                    holders.erase(std::remove(holders.begin(), holders.end(), enclosing), holders.end());
+                }
+                if (mn == ZYDIS_MNEMONIC_RET || mn == ZYDIS_MNEMONIC_INT3) return;
             }
         }
         std::int64_t RelativeDestination(const Pe& pe, std::size_t instruction, std::size_t displacementOffset, std::size_t length)
@@ -484,15 +577,17 @@ namespace AnyFSE::Tools::XboxStartup
         std::vector<Finding> findings;
         const auto slots = pe.ImportSlots(c::XboxStartupDeviceFormExport);
         if (slots.empty()) return findings;
-        for (const auto& range : pe.Code())
+        for (const auto& range : pe.Functions())
         {
-            const std::int64_t base = pe.Rva(range.first);
-            for (std::size_t off = range.first; off + 6 <= range.first + range.second; ++off)
+            const auto function = Decode(pe, image, range.first, range.second);
+            for (std::size_t i = 0; i < function.size(); ++i)
             {
-                if (image[off] != 0xFF || image[off + 1] != 0x15) continue;
-                const auto target = base + std::int64_t(off - range.first) + 6 + std::int64_t(std::int32_t(pe.U32(off + 2)));
-                if (std::find(slots.begin(), slots.end(), target) == slots.end()) continue;
-                FollowFormCall(pe, image, off > range.first && image[off - 1] == 0x48 ? off - 1 : off, off + 6, findings);
+                const auto& insn = function[i];
+                if (insn.instruction.mnemonic != ZYDIS_MNEMONIC_CALL || insn.operands[0].type != ZYDIS_OPERAND_TYPE_MEMORY) continue;
+                ZyanU64 target = 0;
+                if (!ZYAN_SUCCESS(ZydisCalcAbsoluteAddress(&insn.instruction, &insn.operands[0], insn.address, &target))) continue;
+                if (std::find(slots.begin(), slots.end(), static_cast<std::uint32_t>(target)) == slots.end()) continue;
+                FollowFormCall(pe, image, function, i, findings);
             }
         }
         return findings;

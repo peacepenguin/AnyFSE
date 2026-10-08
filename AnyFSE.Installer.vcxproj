@@ -165,6 +165,7 @@
     <ClCompile Include="src\Tools\Localization.cpp" />
     <ClCompile Include="src\Tools\XboxStartup.cpp" />
     <ClCompile Include="src\Tools\XboxStartupPlan.cpp" />
+    <ClCompile Include="src\Tools\zydis\Zydis.c"><PrecompiledHeader>NotUsing</PrecompiledHeader><ForcedIncludeFiles></ForcedIncludeFiles><AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)src\Tools\zydis;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="src\Logging\*.cpp" />
     <ClCompile Include="src\App\GamingExperience.cpp" />
     <ClCompile Include="src\Ally\Services.cpp" />

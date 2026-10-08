@@ -119,6 +119,7 @@
         <ClCompile Include="src\Configuration\*.cpp" />
         <ClCompile Include="src\Logging\*.cpp" />
         <ClCompile Include="src\Tools\*.cpp" />
+        <ClCompile Include="src\Tools\zydis\Zydis.c"><PrecompiledHeader>NotUsing</PrecompiledHeader><ForcedIncludeFiles></ForcedIncludeFiles><AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)src\Tools\zydis;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
         <ClCompile Include="src\FluentDesign\*.cpp" />
         <ClCompile Include="src\Updater\Updater.cpp" />
     </ItemGroup>

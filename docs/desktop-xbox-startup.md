@@ -168,28 +168,41 @@ validators expect from a well-formed PE file.
 
 ### Surviving new layouts: discovery and unverified sites
 
+Discovery is driven by a real x64 disassembler, the vendored Zydis amalgamation
+(`src/Tools/zydis`, MIT; see `THIRD_PARTY_NOTICES/Zydis.txt`), compiled statically
+into each binary. Instructions are decoded per `RUNTIME_FUNCTION` from the
+exception table, so analysis follows actual operands and data flow rather than
+fixed byte patterns.
+
 Each `Site` is either **verified** (a layout validated on real builds; applied by
 the installer and the normal **Enable** button) or **unverified** (found
 structurally on an unknown layout; applied only by `ApplyUnverified()` after the
 user reviews the exact sites in Settings and confirms, or with
 `AnyFSE.exe /XboxStartup apply-unverified`).
 
-- **Import-anchored discovery** (`DiscoverHandheldChecks`): finds every
-  `call [IAT]` to `RtlGetDeviceFamilyInfoEnum` (regular or delay-load import),
-  takes the device-form output slot from the closest `lea r8,[rsp/rbp+x]`
-  (skipped if r8 is rewritten before the call), and follows it to the
-  `cmp …,0x2E` in the same x64 function: directly (`cmp [slot],2Eh`, disp8 or
-  disp32) or through `mov r32,[slot]; cmp r32,2Eh`. Supported consumers:
-  `sete`/`setne` (→ `mov reg8,1/0`), `je` (→ unconditional `jmp` to the same
-  target), `jne` (→ `nop`, falling through to the handheld path). Any other
-  consumer (`cmove`, `sete [mem]`, `ja`) is reported only and never patched.
-  The validated `cmp [rsp+x],2Eh; sete` layout is recognized as verified, so
-  discovery adds no duplicate sites for it.
+- **Import-anchored discovery** (`DiscoverHandheldChecks`): decodes each function
+  and finds every `call` through the import/delay-import slot for
+  `RtlGetDeviceFamilyInfoEnum` (the call target is resolved with
+  `ZydisCalcAbsoluteAddress`). It takes the device-form output slot from the
+  nearest preceding `lea r8, [stack slot]` (bailing if R8 is rewritten before the
+  call), then tracks that stack slot — and any register the value is copied into
+  via `mov`/`movzx`/`movsx` — forward to a `cmp <value>, 0x2E` in the same
+  function. Register choice, addressing mode and displacement width do not matter
+  because the match is on decoded operands. Supported consumers of the compare:
+  `setz`/`setnz` (→ `mov reg, 1/0`, encoded for the actual destination register),
+  `jz` (→ unconditional `jmp` to the same target, shortest encoding that fits),
+  `jnz` (→ `nop`, falling through to the handheld path). Any other consumer
+  (`cmovz`, `setz [mem]`, `ja`, …) is reported only and never patched. The
+  validated `cmp [rsp+x],2Eh; setz` layout is flagged verified, so discovery adds
+  no duplicate site for it. Rewrites are produced by the Zydis encoder and padded
+  with `ZydisEncoderNopFill`, so they are exactly what an assembler would emit.
 - **Unrecognized export prologues** (gamemode `IsSupported`/`CanSet`): stubbed
   with `mov eax,1; ret` as an unverified site only when the export is a
   `RUNTIME_FUNCTION` entry (optionally after `ENDBR64`), the function is at least
-  as long as the stub, and no relative branch in executable code lands inside
-  the overwritten bytes.
+  as long as the stub, and no relative branch or call in any decoded function
+  targets inside the overwritten bytes (`ZydisCalcAbsoluteAddress` resolves each
+  branch target). Decoding per function entry keeps the stream aligned, so a
+  misread can only refuse the stub, never approve an unsafe one.
 - **Patched-state detection** comes from a validated backup that reproduces the
   installed image (with or without the unverified sites), not from patched-byte
   signatures, because a discovered compare no longer exists once replaced.

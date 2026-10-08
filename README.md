@@ -15,7 +15,7 @@ Some other launchers potentially can be supported too with minor customizations
 
 - Way how to create home app was inspired by @driver1998 work [FullScreenExperienceShell](https://github.com/driver1998/FullScreenExperienceShell). Also thanks to discord user 'silicon' who show me that project.
 - Handling of ASUS Rog Ally buttons inspired by such projects like [Handheld Companion](https://github.com/Valkirie/HandheldCompanion) and [g-helper](https://github.com/seerge/g-helper).
-- Desktop Xbox startup (Home app selection without a handheld) is adapted from @victorrjimenezz work [XboxStartupEnabler](https://github.com/victorrjimenezz/XboxStartupEnabler) (MIT).
+- Desktop Xbox startup (Home app selection without a handheld) is adapted from @victorrjimenezz work [XboxStartupEnabler](https://github.com/victorrjimenezz/XboxStartupEnabler) (MIT). Future-build compatibility uses the [Zydis](https://github.com/zyantific/zydis) x64 disassembler/encoder (MIT) by Florian Bernd and Joel Höner.
 - Discord users 'Marecki' and 'TwoTracks' who helped me to design and test such features like Xbox Ally support and Steam buttons mapping.
 - All users submitted me Localization files.
 
@@ -211,9 +211,10 @@ only the handheld checks in `gamemode.dll`, `SettingsHandlers_Gaming.dll`, `twin
 Beyond the upstream patcher, AnyFSE can handle **unverified DLLs**, meaning Windows builds whose code layout hasn't been
 validated yet:
 
-- It finds handheld checks by following the Windows device-form API (`RtlGetDeviceFamilyInfoEnum`) to where its result
-  is compared, rather than matching one fixed byte pattern, so moved or recompiled checks are still found.
-- It can stub gaming exports with unfamiliar prologues when that is structurally safe.
+- It disassembles the DLLs with a bundled x64 disassembler ([Zydis](https://github.com/zyantific/zydis), MIT) and follows the
+  Windows device-form API (`RtlGetDeviceFamilyInfoEnum`) through the actual data flow to where its result is compared, rather
+  than matching one fixed byte pattern, so moved or recompiled checks are still found.
+- It can stub gaming exports with unfamiliar prologues when the disassembler confirms that is structurally safe.
 - Sites found this way are never applied automatically. AnyFSE settings list exactly what would change and apply them
   only after you confirm.
 - `AnyFSE.exe /XboxStartup status`, `scan` and `apply-unverified` support diagnostics.

@@ -123,7 +123,8 @@ int main(int argc, char **argv)
                     std::cout << argv[i] << ": " << sites.size() << " recognized sites\n";
                     for (const auto& site : sites)
                         std::cout << "  +0x" << std::hex << site.offset << std::dec
-                            << (site.state == x::State::Original ? " original" : " patched") << '\n';
+                            << (site.state == x::State::Original ? " original" : " patched")
+                            << (site.verified ? "" : " UNVERIFIED ") << site.description << '\n';
                     const auto patchedImage = x::PatchImage(targets[i - 1], image);
                     const auto patchedSites = x::BuildPlan(targets[i - 1], patchedImage);
                     Check(std::all_of(patchedSites.begin(), patchedSites.end(), [](const x::Site& site) { return site.state == x::State::Patched; }),
@@ -282,8 +283,14 @@ int main(int argc, char **argv)
         Check(x::PatchImage(x::Target::Settings, jne)[0x615] == 0x83, "Never apply unverified sites by default");
         Check(x::PatchImage(x::Target::Settings, jne, true)[0x61A] == 0x90, "Apply unverified sites after confirmation");
         const auto je = FormImage({0x74, 0x05, 0xB0, 0x00, 0xC3, 0, 0, 0xB0, 0x01, 0xC3});
-        Check(x::BuildPlan(x::Target::Settings, je)[0].replacement == x::Bytes({0xEB, 0x0A, 0x90, 0x90, 0x90, 0x90, 0x90}),
-            "Rewrite je to an unconditional jump to the same handheld target");
+        const auto jePlan = x::BuildPlan(x::Target::Settings, je);
+        // cmp at file 0x615 (RVA 0x1415); jz +5 at 0x61A targets RVA 0x1421. Accept any valid jmp encoding (short or near) to
+        // that same target with NOP padding across the cmp+jz region, rather than one hard-coded encoder byte choice.
+        Check(jePlan.size() == 1 && jePlan[0].offset == 0x615 && jePlan[0].replacement.size() == 7, "Rewrite je across the cmp+jz region");
+        const auto& jb = jePlan[0].replacement;
+        const long long jmpTarget = jb[0] == 0xEB ? 0x1415 + 2 + static_cast<signed char>(jb[1])
+            : jb[0] == 0xE9 ? 0x1415 + 5 + static_cast<int>(jb[1] | (jb[2] << 8) | (jb[3] << 16) | (jb[4] << 24)) : -1;
+        Check(jmpTarget == 0x1421, "je rewrite is an unconditional jump to the original handheld target");
         const auto knownShape = FormImage({0x0F, 0x94, 0xC0, 0xC3});
         const auto knownPlan = x::BuildPlan(x::Target::Settings, knownShape);
         Check(knownPlan.size() == 1 && knownPlan[0].verified, "Keep the validated sete layout verified and avoid duplicates");
@@ -295,22 +302,21 @@ int main(int argc, char **argv)
         Check(reportOnly.size() == 1 && !reportOnly[0].patchable, "Report unsupported consumers without patching them");
         Check(x::BuildPlan(x::Target::SettingsEnvironment, conditionalMove).empty(), "Unsupported consumers never enter the plan");
 
-        // An unrecognized export prologue is stubbed only at a real function entry that nothing branches into.
+        // An unrecognized export prologue is stubbed only at a real function entry that nothing branches into. Three ordered
+        // RUNTIME_FUNCTION entries cover the exports: IsSupported [0x1020,0x1040), CanSet [0x1040,0x1080), Set [0x1080,0x1100).
         auto prologue = game;
         Put32(prologue, 0x98 + 140, 36);
-        Put32(prologue, 0xB00, 0x1020);
-        Put32(prologue, 0xB04, 0x1038);
-        Put32(prologue, 0xB0C, 0x1040);
-        Put32(prologue, 0xB10, 0x1060);
-        Put32(prologue, 0xB18, 0x1080);
-        Put32(prologue, 0xB1C, 0x1100);
+        Put32(prologue, 0xB00, 0x1020); Put32(prologue, 0xB04, 0x1040); Put32(prologue, 0xB08, 0);
+        Put32(prologue, 0xB0C, 0x1040); Put32(prologue, 0xB10, 0x1080); Put32(prologue, 0xB14, 0);
+        Put32(prologue, 0xB18, 0x1080); Put32(prologue, 0xB1C, 0x1100); Put32(prologue, 0xB20, 0);
         Put(prologue, 0x220, {0x40, 0x53, 0x48, 0x83, 0xEC, 0x20});
         const auto prologuePlan = x::BuildPlan(x::Target::GameMode, prologue);
         Check(!prologuePlan[0].verified && prologuePlan[1].verified && prologuePlan[2].verified, "Stub unknown prologue only as unverified");
         Check(x::PatchImage(x::Target::GameMode, prologue)[0x220] == 0x40, "Keep unknown prologue intact without confirmation");
         Check(x::PatchImage(x::Target::GameMode, prologue, true)[0x220] == 0xB8, "Stub unknown prologue after confirmation");
+        // A near jmp inside the Set function (RVA 0x10F0) whose target lands in the IsSupported stub bytes (RVA 0x1022).
         auto branchedInto = prologue;
-        Put(branchedInto, 0x300, {0xE9, 0x1D, 0xFF, 0xFF, 0xFF});
+        Put(branchedInto, 0x2F0, {0xE9, 0x2D, 0xFF, 0xFF, 0xFF});
         Reject([&] { x::BuildPlan(x::Target::GameMode, branchedInto); }, "Reject stub when a branch lands inside the entry bytes");
         auto notEntry = prologue;
         Put32(notEntry, 0xB00, 0x101C);
