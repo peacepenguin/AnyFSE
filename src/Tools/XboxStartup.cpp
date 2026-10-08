@@ -32,9 +32,11 @@ namespace AnyFSE::Tools::XboxStartup
         namespace fs = std::filesystem;
         namespace c = App::Constants;
         Logger log = LogManager::GetLogger("XboxStartup");
-        struct Spec { const wchar_t *name; Target target; };
+        struct Spec { const wchar_t *name; Target target; bool optional = false; };
+        // Matches upstream's generic handheld-check patch. Optional targets are skipped when absent from this Windows build.
         const Spec specs[] = {{c::XboxStartupGameModeDll, Target::GameMode},
-            {c::XboxStartupSettingsDll, Target::Settings}, {c::XboxStartupShellDll, Target::Shell}};
+            {c::XboxStartupSettingsDll, Target::Settings}, {c::XboxStartupShellDll, Target::Shell},
+            {c::XboxStartupSettingsEnvironmentDll, Target::SettingsEnvironment, true}};
         void Check(bool success, const char *operation)
         {
             if (!success) throw std::runtime_error(std::string(operation) + " (Windows error " + std::to_string(GetLastError()) + ")");
@@ -349,6 +351,7 @@ namespace AnyFSE::Tools::XboxStartup
                 try
                 {
                     const auto path = directory / spec.name;
+                    if (spec.optional && !fs::exists(path)) continue;
                     const auto before = Read(path);
                     const auto plan = BuildPlan(spec.target, before);
                     snapshots.emplace_back(path, before);
@@ -456,6 +459,7 @@ namespace AnyFSE::Tools::XboxStartup
             {
                 try
                 {
+                    if (spec.optional && !fs::exists(directory / spec.name)) continue;
                     const auto image = Read(directory / spec.name);
                     const auto plan = BuildPlan(spec.target, image);
                     const bool patched = All(plan, State::Patched), original = All(plan, State::Original);

@@ -300,7 +300,7 @@ namespace AnyFSE::Tools::XboxStartup
         }
         else
         {
-            Require(target == Target::Settings || target == Target::Shell, "Unknown patch target");
+            Require(target == Target::Settings || target == Target::Shell || target == Target::SettingsEnvironment, "Unknown patch target");
             for (const auto& range : pe.Code())
                 for (std::size_t off = range.first; off + 8 <= range.first + range.second; ++off)
                 {
@@ -316,7 +316,8 @@ namespace AnyFSE::Tools::XboxStartup
                 }
             // As in upstream, compiler inlining may change the number of identical checks between builds.
             // Every site must still match the complete original/replacement sequence in executable code.
-            Require(!sites.empty(), "No recognized handheld checks in executable code");
+            // Newer builds gate the Settings Gaming Posture page in SettingsEnvironment.Desktop.dll; older builds have no check there.
+            Require(!sites.empty() || target == Target::SettingsEnvironment, "No recognized handheld checks in executable code");
         }
         auto ordered = sites;
         std::sort(ordered.begin(), ordered.end(), [](const Site& a, const Site& b) { return a.offset < b.offset; });

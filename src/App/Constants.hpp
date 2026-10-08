@@ -14,6 +14,7 @@ namespace AnyFSE::App::Constants
     inline constexpr wchar_t XboxStartupGameModeDll[] = L"gamemode.dll";
     inline constexpr wchar_t XboxStartupSettingsDll[] = L"SettingsHandlers_Gaming.dll";
     inline constexpr wchar_t XboxStartupShellDll[] = L"twinui.pcshell.dll";
+    inline constexpr wchar_t XboxStartupSettingsEnvironmentDll[] = L"SettingsEnvironment.Desktop.dll";
     inline constexpr char XboxStartupSupportedExport[] = "IsGamingFullScreenExperienceSupported";
     inline constexpr char XboxStartupCanSetExport[] = "CanSetGamingFullScreenExperience";
     inline constexpr char XboxStartupSetExport[] = "SetGamingFullScreenExperience";

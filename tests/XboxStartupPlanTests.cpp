@@ -247,6 +247,8 @@ int main(int argc, char **argv)
         Check(x::PatchImage(x::Target::Settings, variableCount) == variableCount, "Variable check count remains idempotent");
         const auto noChecks = Image();
         Reject([&] { x::BuildPlan(x::Target::Settings, noChecks); }, "Reject absence of recognized checks");
+        Check(x::BuildPlan(x::Target::SettingsEnvironment, noChecks).empty(), "Optional Settings environment check may be absent");
+        Check(x::PatchImage(x::Target::SettingsEnvironment, settings)[0x320] == 0xB1, "Patch Settings environment handheld check");
         for (const std::size_t length : {0u, 1u, 63u, 127u, 255u, 511u})
         {
             const x::Bytes truncated(game.begin(), game.begin() + length);
