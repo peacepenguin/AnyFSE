@@ -147,5 +147,7 @@ namespace AnyFSE
             bool AutoDeleteSelf(const std::wstring &path, bool deleteFolder);
             bool TerminateAnyFSE();
             void OnDone();
+            void OnRestartNow();
+            bool m_rebootRequired = false;
     };
 }

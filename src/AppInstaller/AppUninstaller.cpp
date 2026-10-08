@@ -43,6 +43,7 @@
 #include "Tools/Localization.hpp"
 #include "App/Constants.hpp"
 #include "App/GamingExperience.hpp"
+#include "Tools/XboxStartup.hpp"
 #include "Ally/Services.hpp"
 #include "AppInstaller/Certificate.hpp"
 #include "AppInstaller/ScheduledTask.hpp"
@@ -452,8 +453,9 @@ namespace AnyFSE
         m_languageButton.Show(false);
         ShowPage(Icon_Done,
             Translate(L"doneBtn"),
-            Translate(L"uninstallerDoneDescription"),
-            Translate(L"doneBtn"), delegate(OnDone)
+            Translate(m_rebootRequired ? L"uninstallerDoneRestartDescription" : L"uninstallerDoneDescription"),
+            Translate(m_rebootRequired ? L"restartLaterBtn" : L"doneBtn"), delegate(OnDone),
+            m_rebootRequired ? Translate(L"restartNowBtn") : L"", delegate(OnRestartNow)
         );
     }
 
@@ -536,6 +538,14 @@ namespace AnyFSE
 
     void AppUninstaller::Uninstall(bool update)
     {
+        // Restore patched system DLLs before removing anything, so a failure aborts with AnyFSE still installed and able to retry.
+        // During an update the new version keeps the patches.
+        if (!update && Tools::XboxStartup::Inspect().anyPatched)
+        {
+            Tools::XboxStartup::Restore();
+            m_rebootRequired = true;
+        }
+
         ToolsEx::ScheduledTask::DeleteListenerTask();
         ToolsEx::ScheduledTask::DeleteAnyFSETask();
         Registry::DeleteValue(App::Constants::HidListenerAutorunKey, App::Constants::HidListenerAutorunValue);
@@ -616,6 +626,23 @@ namespace AnyFSE
 
     void AppUninstaller::OnDone()
     {
+        EndDialog(m_hDialog, IDOK);
+    }
+
+    void AppUninstaller::OnRestartNow()
+    {
+        HANDLE token = nullptr;
+        if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token))
+        {
+            TOKEN_PRIVILEGES privileges = {};
+            privileges.PrivilegeCount = 1;
+            privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+            if (LookupPrivilegeValueW(nullptr, SE_SHUTDOWN_NAME, &privileges.Privileges[0].Luid))
+                AdjustTokenPrivileges(token, FALSE, &privileges, 0, nullptr, nullptr);
+            CloseHandle(token);
+        }
+        if (!ExitWindowsEx(EWX_REBOOT, SHTDN_REASON_MAJOR_APPLICATION | SHTDN_REASON_MINOR_RECONFIG | SHTDN_REASON_FLAG_PLANNED))
+            log.Error(log.APIError(), "Unable to restart after restoring Windows components");
         EndDialog(m_hDialog, IDOK);
     }
 }

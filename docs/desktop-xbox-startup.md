@@ -200,7 +200,7 @@ can still be put back.
    afterward in AnyFSE settings, choose **Enable Xbox startup on PC**, which calls
    the same `Tools::XboxStartup::Apply()` through AnyFSE's existing elevated
    scheduled-task handler and is similarly only enabled once `canApply` is true.
-3. Sign out or restart to load the changed Windows components. The operation does
+3. Restart to load the changed Windows components. The operation does
    not reboot or change startup settings automatically.
 4. Choose your Home app and turn on **Enter FSE on startup** in AnyFSE. For testing
    the Microsoft Xbox home screen, choose the native Xbox launcher. For testing

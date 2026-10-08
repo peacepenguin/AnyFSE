@@ -127,6 +127,8 @@
     <ClCompile Include="src\Tools\Window.cpp" />
     <ClCompile Include="src\Tools\Icon.cpp" />
     <ClCompile Include="src\Tools\Paths.cpp" />
+    <ClCompile Include="src\Tools\XboxStartup.cpp" />
+    <ClCompile Include="src\Tools\XboxStartupPlan.cpp" />
     <ClCompile Include="src\Logging\*.cpp" />
     <ClCompile Include="src\Tools\Localization.cpp" />
   </ItemGroup>

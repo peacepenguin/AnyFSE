@@ -231,6 +231,9 @@ namespace AnyFSE
         try
         {
             Tools::XboxStartup::Apply();
+            // Already-loaded copies of the patched DLLs stay in use until restart; Settings looks enabled but does not work yet.
+            MessageBoxW(m_hDialog, Translate(L"desktopXboxStartupComplete").c_str(),
+                Translate(L"desktopXboxStartupTitle").c_str(), MB_OK | MB_ICONINFORMATION);
         }
         catch (const std::exception &error)
         {
