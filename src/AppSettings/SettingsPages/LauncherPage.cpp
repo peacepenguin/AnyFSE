@@ -41,6 +41,15 @@ namespace AnyFSE::App::AppSettings::Settings::Page
         m_restoreDesktopXboxStartupButton.SetText(Translate(L"settingsRestoreDesktopXboxStartupButton"));
         m_restoreDesktopXboxStartupButton.OnChanged += delegate(OnRestoreDesktopXboxStartup);
 
+        m_pUnverifiedXboxStartupLine = &m_dialog.AddSettingsLine(settingPageList, top,
+            Translate(L"settingsUnverifiedXboxStartup"), Translate(L"settingsUnverifiedXboxStartupDescription"),
+            m_applyUnverifiedXboxStartupButton, Layout::LineHeight, Layout::LinePadding, 0,
+            Layout::CustomSettingsWidth, Layout::BrowseHeight);
+        m_pUnverifiedXboxStartupLine->SetIcon(L'\xE7BA');
+        m_pUnverifiedXboxStartupLine->Show(false);
+        m_applyUnverifiedXboxStartupButton.SetText(Translate(L"settingsUnverifiedXboxStartupButton"));
+        m_applyUnverifiedXboxStartupButton.OnChanged += delegate(OnApplyUnverifiedXboxStartup);
+
         m_pLauncherLine = &m_dialog.AddSettingsLine(settingPageList, top,
             Translate(L"settingsChooseHomeApp"),
             Translate(L"settingsChooseHomeAppDescription"),
@@ -343,6 +352,21 @@ namespace AnyFSE::App::AppSettings::Settings::Page
             Translate(L"desktopXboxStartupTitle").c_str(), MB_OK | (succeeded ? MB_ICONINFORMATION : MB_ICONERROR));
     }
 
+    void LauncherPage::OnApplyUnverifiedXboxStartup()
+    {
+        // Discovered sites have not been validated on this Windows build: show exactly what will change and require consent.
+        const auto desktop = Tools::XboxStartup::Inspect();
+        if (!desktop.unverifiedPending) return UpdateHomeAppSelection();
+        const auto prompt = Translate(L"desktopXboxStartupUnverifiedConfirm") + L"\n\n" + desktop.unverifiedDetails;
+        if (MessageBoxW(m_dialog.GetHwnd(), prompt.c_str(), Translate(L"desktopXboxStartupTitle").c_str(),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
+        m_applyUnverifiedXboxStartupButton.Enable(false);
+        const bool succeeded = Elevated::Call(c::ElevatedApplyDesktopXboxStartupUnverified);
+        UpdateHomeAppSelection();
+        MessageBoxW(m_dialog.GetHwnd(), Translate(succeeded ? L"desktopXboxStartupComplete" : L"desktopXboxStartupFailed").c_str(),
+            Translate(L"desktopXboxStartupTitle").c_str(), MB_OK | (succeeded ? MB_ICONINFORMATION : MB_ICONERROR));
+    }
+
     void LauncherPage::UpdateHomeAppSelection()
     {
         const auto desktop = Tools::XboxStartup::Inspect();
@@ -355,6 +379,9 @@ namespace AnyFSE::App::AppSettings::Settings::Page
         m_enableHomeAppSelectionButton.Enable(!handheld && desktop.canApply);
         m_pRestoreDesktopXboxStartupLine->Show(desktop.anyPatched);
         m_restoreDesktopXboxStartupButton.Enable(desktop.canRestore);
+        m_pUnverifiedXboxStartupLine->Show(!handheld && desktop.unverifiedPending);
+        m_pUnverifiedXboxStartupLine->SetDescription(Translate(L"settingsUnverifiedXboxStartupDescription") + L"\n" + desktop.unverifiedDetails);
+        m_applyUnverifiedXboxStartupButton.Enable(!handheld && desktop.unverifiedPending);
         m_pLauncherLine->Show(available);
         m_pBrowseLine->Show(available);
         m_pFseOnStartupLine->Show(available);

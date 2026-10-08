@@ -11,6 +11,15 @@ namespace AnyFSE::App::Constants
     // Desktop Xbox startup support (explicit opt-in system-file patch).
     inline constexpr wchar_t ElevatedApplyDesktopXboxStartup[] = L"ApplyDesktopXboxStartup";
     inline constexpr wchar_t ElevatedRestoreDesktopXboxStartup[] = L"RestoreDesktopXboxStartup";
+    inline constexpr wchar_t ElevatedApplyDesktopXboxStartupUnverified[] = L"ApplyDesktopXboxStartupUnverified";
+    inline constexpr wchar_t XboxStartupCommand[] = L"/XboxStartup";
+    inline constexpr wchar_t XboxStartupVerbStatus[] = L"status";
+    inline constexpr wchar_t XboxStartupVerbVerify[] = L"verify";
+    inline constexpr wchar_t XboxStartupVerbApply[] = L"apply";
+    inline constexpr wchar_t XboxStartupVerbApplyUnverified[] = L"apply-unverified";
+    inline constexpr wchar_t XboxStartupVerbRestore[] = L"restore";
+    inline constexpr wchar_t XboxStartupVerbScan[] = L"scan";
+    inline constexpr wchar_t XboxStartupDllExtension[] = L".dll";
     inline constexpr wchar_t XboxStartupGameModeDll[] = L"gamemode.dll";
     inline constexpr wchar_t XboxStartupSettingsDll[] = L"SettingsHandlers_Gaming.dll";
     inline constexpr wchar_t XboxStartupShellDll[] = L"twinui.pcshell.dll";

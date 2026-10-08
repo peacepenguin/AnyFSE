@@ -329,12 +329,53 @@ namespace AnyFSE::Tools::XboxStartup
                 log.Warn("Old loaded image retained until manual cleanup: %ls", previous.c_str());
             }
         }
-        struct Change { fs::path path; Bytes before, after; };
+        struct Change { fs::path path; Bytes before, after, original; };
         bool All(const std::vector<Site>& sites, State state)
         {
             return std::all_of(sites.begin(), sites.end(), [state](const Site& site) { return site.state == state; });
         }
-        void Execute(bool restore)
+        bool Any(const std::vector<Site>& sites, bool verified)
+        {
+            return std::any_of(sites.begin(), sites.end(), [verified](const Site& site) { return site.verified == verified; });
+        }
+        // What AnyFSE knows about one installed target. Patched state comes from a validated backup that reproduces the installed
+        // image, not from recognizing patched bytes, because a discovered site's compare is gone once it has been replaced.
+        struct Analysis
+        {
+            std::vector<Site> plan; // Resolved on the pristine image.
+            Bytes original;         // Pristine image: the installed file itself, or the backup it was patched from.
+            bool patched = false;   // Installed image is AnyFSE's patch of `original`.
+            bool unverifiedApplied = false;
+            bool foreign = false;   // Every verified site is patched but no AnyFSE backup reproduces the image.
+        };
+        Analysis Analyze(const Spec& spec, const Bytes& image, const fs::path& backups)
+        {
+            Analysis result;
+            const auto backup = Backup(backups, spec, image);
+            if (fs::exists(backup))
+            {
+                auto original = Read(backup);
+                auto plan = BuildPlan(spec.target, original);
+                if (All(plan, State::Original))
+                {
+                    const bool all = PatchImage(spec.target, original, true) == image;
+                    if (all || PatchImage(spec.target, original) == image)
+                    {
+                        result.unverifiedApplied = all && Any(plan, false);
+                        result.plan = std::move(plan);
+                        result.original = std::move(original);
+                        result.patched = true;
+                        return result;
+                    }
+                }
+            }
+            result.plan = BuildPlan(spec.target, image);
+            if (All(result.plan, State::Original)) result.original = image;
+            else if (Any(result.plan, true) && All(result.plan, State::Patched)) result.foreign = true;
+            else throw std::runtime_error("Partially patched image with no matching AnyFSE backup: restore it with sfc /scannow first");
+            return result;
+        }
+        void Execute(bool restore, bool includeUnverified = false)
         {
             // Enforce at the mutation boundary, including elevated and CLI invocations.
             // Restoration remains available for previously modified handhelds.
@@ -353,22 +394,19 @@ namespace AnyFSE::Tools::XboxStartup
                     const auto path = directory / spec.name;
                     if (spec.optional && !fs::exists(path)) continue;
                     const auto before = Read(path);
-                    const auto plan = BuildPlan(spec.target, before);
+                    const auto analysis = Analyze(spec, before, backups);
                     snapshots.emplace_back(path, before);
                     if (restore)
                     {
-                        if (All(plan, State::Original)) continue;
-                        const auto backup = Backup(backups, spec, before);
-                        const auto original = Read(backup);
-                        if (!All(BuildPlan(spec.target, original), State::Original) || PatchImage(spec.target, original) != before)
-                            throw std::runtime_error("Backup does not match the currently installed Windows image");
-                        changes.push_back({path, before, original});
+                        if (analysis.foreign) throw std::runtime_error("Backup does not match the currently installed Windows image");
+                        if (analysis.patched) changes.push_back({path, before, analysis.original, analysis.original});
                     }
                     else
                     {
-                        if (All(plan, State::Patched)) continue;
-                        if (!All(plan, State::Original)) throw std::runtime_error("Partially patched image: restore it with its original patcher first");
-                        changes.push_back({path, before, PatchImage(spec.target, before)});
+                        // A plain apply never adds or removes unverified sites the user confirmed earlier.
+                        if (analysis.foreign || (analysis.patched && (!includeUnverified || analysis.unverifiedApplied))) continue;
+                        const auto after = PatchImage(spec.target, analysis.original, includeUnverified);
+                        if (after != before) changes.push_back({path, before, after, analysis.original});
                     }
                 }
                 catch (const std::exception& error)
@@ -401,12 +439,12 @@ namespace AnyFSE::Tools::XboxStartup
                     const fs::path backup = backups / (change.path.filename().wstring() + L"." + Hash(change.after) + c::XboxStartupBackupSuffix);
                     if (fs::exists(backup))
                     {
-                        if (Read(backup) != change.before) throw std::runtime_error("Existing original backup does not match");
+                        if (Read(backup) != change.original) throw std::runtime_error("Existing original backup does not match");
                     }
-                    else Write(backup, change.before);
-                    if (Read(backup) != change.before) throw std::runtime_error("Original backup verification failed");
+                    else Write(backup, change.original);
+                    if (Read(backup) != change.original) throw std::runtime_error("Original backup verification failed");
                     Record(journal, L"ORIGINAL_BACKUP target=" + change.path.wstring() + L" backup=" + backup.wstring()
-                        + L" original=" + Hash(change.before) + L" patched=" + Hash(change.after));
+                        + L" original=" + Hash(change.original) + L" patched=" + Hash(change.after));
                 }
             }
             std::size_t completed = 0;
@@ -460,21 +498,20 @@ namespace AnyFSE::Tools::XboxStartup
                 try
                 {
                     if (spec.optional && !fs::exists(directory / spec.name)) continue;
-                    const auto image = Read(directory / spec.name);
-                    const auto plan = BuildPlan(spec.target, image);
-                    const bool patched = All(plan, State::Patched), original = All(plan, State::Original);
-                    status.allPatched &= patched;
-                    status.anyPatched |= !original;
-                    status.canApply &= patched || original;
-                    status.details += std::wstring(spec.name) + (patched ? L": enabled\n" : original ? L": original\n" : L": partial patch\n");
-                    if (!original)
+                    const auto analysis = Analyze(spec, Read(directory / spec.name), backups);
+                    // A target with no verified site (an optional DLL without the check) needs nothing for the validated patch.
+                    const bool enabled = analysis.patched || analysis.foreign || !Any(analysis.plan, true);
+                    status.allPatched &= enabled;
+                    status.anyPatched |= analysis.patched || analysis.foreign;
+                    if (analysis.foreign) status.canRestore = false;
+                    status.details += std::wstring(spec.name) + (analysis.foreign ? L": enabled outside AnyFSE (no backup to restore)\n"
+                        : analysis.patched ? L": enabled\n" : enabled ? L": nothing to patch\n" : L": original\n");
+                    if (analysis.foreign || analysis.unverifiedApplied) continue;
+                    for (const auto& site : analysis.plan)
                     {
-                        try
-                        {
-                            const auto backup = Read(Backup(backups, spec, image));
-                            status.canRestore &= All(BuildPlan(spec.target, backup), State::Original) && PatchImage(spec.target, backup) == image;
-                        }
-                        catch (...) { status.canRestore = false; }
+                        if (site.verified) continue;
+                        status.unverifiedPending = true;
+                        status.unverifiedDetails += std::wstring(spec.name) + L" " + Unicode::to_wstring(site.description) + L"\n";
                     }
                 }
                 catch (const std::exception& error)
@@ -492,11 +529,46 @@ namespace AnyFSE::Tools::XboxStartup
         if (IsHandheldDevice())
         {
             status.canApply = false;
+            status.unverifiedPending = false;
             status.details += L"Desktop patch application disabled: handheld device or unavailable device classification.\n";
         }
+        if (!status.canApply) status.unverifiedPending = false;
         status.canRestore &= status.anyPatched;
         return status;
     }
     void Apply() { Execute(false); }
+    void ApplyUnverified() { Execute(false, true); }
     void Restore() { Execute(true); }
+    std::wstring Scan()
+    {
+        // Read-only: lists device-form checks in every System32 DLL so a new layout or a newly gated DLL can be investigated.
+        // Unlisted DLLs are never patched; these checks also gate unrelated features such as search and input.
+        std::wstring report = L"Windows " + WindowsBuildString() + L"\n";
+        const std::string marker = c::XboxStartupDeviceFormExport;
+        std::size_t scanned = 0;
+        for (const auto& entry : fs::directory_iterator(SystemDirectory()))
+        {
+            if (!entry.is_regular_file() || _wcsicmp(entry.path().extension().c_str(), c::XboxStartupDllExtension)) continue;
+            try
+            {
+                const auto image = Read(entry.path());
+                if (std::search(image.begin(), image.end(), marker.begin(), marker.end()) == image.end()) continue;
+                ++scanned;
+                const auto findings = DiscoverHandheldChecks(image);
+                if (findings.empty()) continue;
+                const bool target = std::any_of(std::begin(specs), std::end(specs),
+                    [&](const Spec& spec) { return !_wcsicmp(spec.name, entry.path().filename().c_str()); });
+                report += entry.path().filename().wstring() + (target ? L" (patch target)\n" : L" (not a patch target)\n");
+                for (const auto& finding : findings)
+                    report += L"  " + std::wstring(finding.known ? L"[known] " : finding.patchable ? L"" : L"[report only] ")
+                        + Unicode::to_wstring(finding.description) + L"\n";
+            }
+            catch (const std::exception& error)
+            {
+                log.Warn("Device-form scan skipped %ls: %s", entry.path().c_str(), error.what());
+            }
+        }
+        report += std::to_wstring(scanned) + L" DLLs import " + Unicode::to_wstring(marker) + L"\n";
+        return report;
+    }
 }

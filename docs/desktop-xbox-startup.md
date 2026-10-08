@@ -166,6 +166,42 @@ A whole-image checksum (`Checksum()`, the standard PE/COFF checksum algorithm)
 is recomputed after patching, matching what the Windows loader and image
 validators expect from a well-formed PE file.
 
+### Surviving new layouts: discovery and unverified sites
+
+Each `Site` is either **verified** (a layout validated on real builds; applied by
+the installer and the normal **Enable** button) or **unverified** (found
+structurally on an unknown layout; applied only by `ApplyUnverified()` after the
+user reviews the exact sites in Settings and confirms, or with
+`AnyFSE.exe /XboxStartup apply-unverified`).
+
+- **Import-anchored discovery** (`DiscoverHandheldChecks`): finds every
+  `call [IAT]` to `RtlGetDeviceFamilyInfoEnum` (regular or delay-load import),
+  takes the device-form output slot from the closest `lea r8,[rsp/rbp+x]`
+  (skipped if r8 is rewritten before the call), and follows it to the
+  `cmp …,0x2E` in the same x64 function: directly (`cmp [slot],2Eh`, disp8 or
+  disp32) or through `mov r32,[slot]; cmp r32,2Eh`. Supported consumers:
+  `sete`/`setne` (→ `mov reg8,1/0`), `je` (→ unconditional `jmp` to the same
+  target), `jne` (→ `nop`, falling through to the handheld path). Any other
+  consumer (`cmove`, `sete [mem]`, `ja`) is reported only and never patched.
+  The validated `cmp [rsp+x],2Eh; sete` layout is recognized as verified, so
+  discovery adds no duplicate sites for it.
+- **Unrecognized export prologues** (gamemode `IsSupported`/`CanSet`): stubbed
+  with `mov eax,1; ret` as an unverified site only when the export is a
+  `RUNTIME_FUNCTION` entry (optionally after `ENDBR64`), the function is at least
+  as long as the stub, and no relative branch in executable code lands inside
+  the overwritten bytes.
+- **Patched-state detection** comes from a validated backup that reproduces the
+  installed image (with or without the unverified sites), not from patched-byte
+  signatures, because a discovered compare no longer exists once replaced.
+  Applying never silently adds or removes unverified sites the user has
+  already confirmed.
+- **Unlisted DLLs are never patched.** `AnyFSE.exe /XboxStartup scan` lists
+  device-form checks in every System32 DLL. On 26100 this includes the search
+  indexer (`mssrch.dll`, `tquery.dll`), `InputHost.dll`,
+  `AboutSettingsHandlers.dll` and `WSAIFabricHost.dll`, which gate unrelated
+  features; it exists to identify when Windows moves a home-app check into a
+  new DLL, which then needs a reviewed `specs` entry.
+
 ### Handheld guard
 
 Before anything in `Execute()` (used by both `Apply()` and `Restore()`) is

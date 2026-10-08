@@ -149,6 +149,7 @@ namespace AnyFSE::App::CmdLine
         Elevated::Register(Constants::ElevatedStartLauncher,  []() { Launchers::StartLauncher(false); });
         Elevated::Register(Constants::ElevatedStartupApps, []() { Launchers::LaunchStartupApps(true); });
         Elevated::Register(Constants::ElevatedApplyDesktopXboxStartup, Tools::XboxStartup::Apply);
+        Elevated::Register(Constants::ElevatedApplyDesktopXboxStartupUnverified, Tools::XboxStartup::ApplyUnverified);
         Elevated::Register(Constants::ElevatedRestoreDesktopXboxStartup, Tools::XboxStartup::Restore);
         Elevated::Register(Constants::ElevatedRestoreGamingPC, GamingExperience::RestoreGamingPC);
 
@@ -193,25 +194,37 @@ namespace AnyFSE::App::CmdLine
         int argc = 0;
         LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         if (!argv) return false;
-        const bool requested = argc >= 2 && !_wcsicmp(argv[1], L"/XboxStartup");
+        const bool requested = argc >= 2 && !_wcsicmp(argv[1], Constants::XboxStartupCommand);
         if (!requested) { LocalFree(argv); return false; }
         const std::wstring verb = argc == 3 ? argv[2] : L"";
         LocalFree(argv);
-        if (!_wcsicmp(verb.c_str(), L"status") || !_wcsicmp(verb.c_str(), L"verify"))
+        const auto is = [&](const wchar_t *name) { return !_wcsicmp(verb.c_str(), name); };
+        if (is(Constants::XboxStartupVerbStatus) || is(Constants::XboxStartupVerbVerify))
         {
             const auto status = Tools::XboxStartup::Inspect();
-            log.Info("Desktop Xbox startup status:\n%ls", status.details.c_str());
-            MessageBoxW(nullptr, status.details.c_str(), L"AnyFSE desktop Xbox startup", MB_OK | MB_ICONINFORMATION);
+            const auto text = status.details + (status.unverifiedPending ? L"\nUnverified checks pending confirmation:\n" + status.unverifiedDetails : L"");
+            log.Info("Desktop Xbox startup status:\n%ls", text.c_str());
+            MessageBoxW(nullptr, text.c_str(), L"AnyFSE desktop Xbox startup", MB_OK | MB_ICONINFORMATION);
             result = status.canApply ? 0 : 1;
         }
-        else if (!_wcsicmp(verb.c_str(), L"apply") || !_wcsicmp(verb.c_str(), L"restore"))
+        else if (is(Constants::XboxStartupVerbScan))
         {
-            const bool apply = !_wcsicmp(verb.c_str(), L"apply");
-            result = Elevated::Call(apply ? Constants::ElevatedApplyDesktopXboxStartup : Constants::ElevatedRestoreDesktopXboxStartup) ? 0 : 1;
+            const auto report = Tools::XboxStartup::Scan();
+            log.Info("Device-form check scan:\n%ls", report.c_str());
+            MessageBoxW(nullptr, report.c_str(), L"AnyFSE device-form check scan", MB_OK | MB_ICONINFORMATION);
+            result = 0;
+        }
+        else if (is(Constants::XboxStartupVerbApply) || is(Constants::XboxStartupVerbApplyUnverified) || is(Constants::XboxStartupVerbRestore))
+        {
+            const auto handler = is(Constants::XboxStartupVerbApply) ? Constants::ElevatedApplyDesktopXboxStartup
+                : is(Constants::XboxStartupVerbRestore) ? Constants::ElevatedRestoreDesktopXboxStartup
+                : Constants::ElevatedApplyDesktopXboxStartupUnverified;
+            result = Elevated::Call(handler) ? 0 : 1;
         }
         else
         {
-            MessageBoxW(nullptr, L"Usage: AnyFSE.exe /XboxStartup status|verify|apply|restore", L"AnyFSE desktop Xbox startup", MB_OK | MB_ICONERROR);
+            MessageBoxW(nullptr, L"Usage: AnyFSE.exe /XboxStartup status|verify|scan|apply|apply-unverified|restore", L"AnyFSE desktop Xbox startup",
+                MB_OK | MB_ICONERROR);
             result = 2;
         }
         return true;

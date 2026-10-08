@@ -23,6 +23,7 @@ namespace AnyFSE::Tools::XboxStartup
             std::size_t sections, count;
             std::uint32_t exportRva, exportSize;
             std::uint32_t exceptionRva = 0, exceptionSize = 0;
+            std::uint32_t importRva = 0, importSize = 0, delayRva = 0, delaySize = 0;
         public:
             std::size_t checksum;
             void Range(std::size_t off, std::size_t length) const
@@ -51,10 +52,20 @@ namespace AnyFSE::Tools::XboxStartup
                 Require(directories > 0 && directories <= (U16(pe + 20) - 112u) / 8, "Invalid PE directory count");
                 exportRva = U32(optional + 112);
                 exportSize = U32(optional + 116);
+                if (directories > 1)
+                {
+                    importRva = U32(optional + 120);
+                    importSize = U32(optional + 124);
+                }
                 if (directories > 3)
                 {
                     exceptionRva = U32(optional + 136);
                     exceptionSize = U32(optional + 140);
+                }
+                if (directories > 13)
+                {
+                    delayRva = U32(optional + 216);
+                    delaySize = U32(optional + 220);
                 }
                 checksum = optional + 64;
                 count = U16(pe + 6);
@@ -155,6 +166,54 @@ namespace AnyFSE::Tools::XboxStartup
                 }
                 throw std::runtime_error("Required gaming export is missing");
             }
+            std::string Name(std::uint32_t rva) const
+            {
+                const auto name = Offset(rva);
+                auto end = name;
+                while (end < data.size() && data[end]) ++end;
+                Require(end < data.size(), "Unterminated import name");
+                return std::string(data.begin() + name, data.begin() + end);
+            }
+            // RVAs of the IAT slots that import `wanted` by name, from both the regular and the delay-load import tables.
+            std::vector<std::uint32_t> ImportSlots(const std::string& wanted) const
+            {
+                std::vector<std::uint32_t> slots;
+                const auto scan = [&](std::uint32_t lookup, std::uint32_t iat)
+                {
+                    if (!lookup) lookup = iat;
+                    for (std::uint32_t i = 0; i < 0x10000; ++i)
+                    {
+                        const auto entry = Offset(lookup + i * 8, 8);
+                        const std::uint64_t thunk = U32(entry) | (std::uint64_t(U32(entry + 4)) << 32);
+                        if (!thunk) return;
+                        if (!(thunk >> 63) && Name(static_cast<std::uint32_t>(thunk & 0x7FFFFFFF) + 2) == wanted) slots.push_back(iat + i * 8);
+                    }
+                };
+                if (importRva && importSize >= 20)
+                {
+                    const auto table = Offset(importRva, 20);
+                    for (std::size_t d = table; U32(d + 12) && d + 20 <= table + std::size_t(importSize); d += 20) scan(U32(d), U32(d + 16));
+                }
+                if (delayRva && delaySize >= 32)
+                {
+                    const auto table = Offset(delayRva, 32);
+                    for (std::size_t d = table; U32(d + 4) && d + 32 <= table + std::size_t(delaySize); d += 32) scan(U32(d + 16), U32(d + 12));
+                }
+                return slots;
+            }
+            // File-offset bounds of the RUNTIME_FUNCTION containing `off`, or {0, 0} when none does.
+            std::pair<std::size_t, std::size_t> Function(std::size_t off) const
+            {
+                if (!exceptionRva || !exceptionSize || exceptionSize % 12) return {0, 0};
+                const auto rva = Rva(off);
+                const auto table = Offset(exceptionRva, exceptionSize);
+                for (std::size_t i = 0; i < exceptionSize; i += 12)
+                {
+                    const auto begin = U32(table + i), end = U32(table + i + 4);
+                    if (rva >= begin && rva < end) return {Offset(begin, end - begin), Offset(begin, end - begin) + (end - begin)};
+                }
+                return {0, 0};
+            }
             std::size_t FunctionEnd(std::size_t entry) const
             {
                 // x64 RUNTIME_FUNCTION entries give an exclusive end RVA. Never scan into a neighboring function.
@@ -221,6 +280,43 @@ namespace AnyFSE::Tools::XboxStartup
                 }() + ": expected [" + DumpPattern(original) + "] or the patched replacement, found [" + Dump(image, off, original.size()) + "]");
             return {off, replacement, State::Original};
         }
+        std::string Hex(std::size_t value)
+        {
+            char text[2 * sizeof(std::size_t) + 1] = {};
+            std::snprintf(text, sizeof(text), "%zx", value);
+            return text;
+        }
+        // Overwriting an entry with `mov eax,1; ret` is safe for any prologue when the entry starts a real x64 function that is
+        // long enough and no relative branch lands inside the overwritten bytes. Branch decoding is byte-level, so a false match
+        // can only refuse a patch, never allow one.
+        bool SafeEntryStub(const Pe& pe, const Bytes& image, std::size_t off, std::size_t length)
+        {
+            const auto function = pe.Function(off);
+            if (!function.second) return false;
+            if (function.first != off && !(function.first + 4 == off && Match(image, function.first, {0xF3, 0x0F, 0x1E, 0xFA}))) return false;
+            if (function.second - off < length) return false;
+            const std::int64_t entry = pe.Rva(off);
+            for (const auto& range : pe.Code())
+            {
+                const std::int64_t base = pe.Rva(range.first);
+                const auto end = range.first + range.second;
+                for (std::size_t i = range.first; i < end; ++i)
+                {
+                    const auto op = image[i];
+                    std::size_t size = 0;
+                    if (op == 0xE8 || op == 0xE9) size = 5;
+                    else if (op == 0xEB || (op >= 0x70 && op <= 0x7F)) size = 2;
+                    else if (op == 0x0F && i + 1 < end && image[i + 1] >= 0x80 && image[i + 1] <= 0x8F) size = 6;
+                    else continue;
+                    if (i + size > end) continue;
+                    const std::int64_t relative = size == 2 ? std::int64_t(std::int8_t(image[i + 1]))
+                        : std::int64_t(std::int32_t(pe.U32(i + size - 4)));
+                    const auto destination = base + std::int64_t(i - range.first) + std::int64_t(size) + relative;
+                    if (destination > entry && destination < entry + std::int64_t(length)) return false;
+                }
+            }
+            return true;
+        }
         Site ResolveExport(const Pe& pe, const Bytes& image, const char *name, const std::vector<int>& original, const Bytes& replacement,
             const std::vector<int>& alternative = {})
         {
@@ -230,7 +326,136 @@ namespace AnyFSE::Tools::XboxStartup
             Require(pe.IsCode(off, replacement.size()), "Export patch crosses executable section boundary");
             if (!alternative.empty() && pe.IsCode(off, alternative.size()) && Match(image, off, alternative))
                 return Resolve(image, off, alternative, replacement);
+            const bool patched = std::equal(replacement.begin(), replacement.end(), image.begin() + off);
+            if (!patched && !Match(image, off, original) && SafeEntryStub(pe, image, off, replacement.size()))
+                return {off, replacement, State::Original, false, std::string(name) + " +0x" + Hex(off) + ": unrecognized prologue ["
+                    + Dump(image, off, replacement.size()) + "] -> mov eax,1; ret"};
             return Resolve(image, off, original, replacement);
+        }
+        // Stack slot named by a ModRM memory operand: [rsp+disp] through SIB 0x24, or [rbp+disp].
+        struct Slot { bool rbp = false; std::int32_t disp = 0; };
+        bool Operand(const Bytes& image, std::size_t modrm, Slot& slot, std::size_t& length)
+        {
+            if (modrm >= image.size()) return false;
+            const auto mod = image[modrm] >> 6, rm = image[modrm] & 7;
+            if (mod != 1 && mod != 2) return false;
+            auto at = modrm + 1;
+            if (rm == 4)
+            {
+                if (at >= image.size() || image[at] != 0x24) return false;
+                slot.rbp = false;
+                ++at;
+            }
+            else if (rm == 5) slot.rbp = true;
+            else return false;
+            if (mod == 1)
+            {
+                if (at >= image.size()) return false;
+                slot.disp = std::int8_t(image[at++]);
+            }
+            else
+            {
+                if (at + 4 > image.size()) return false;
+                slot.disp = std::int32_t(image[at] | (std::uint32_t(image[at + 1]) << 8) | (std::uint32_t(image[at + 2]) << 16)
+                    | (std::uint32_t(image[at + 3]) << 24));
+                at += 4;
+            }
+            length = at - modrm;
+            return true;
+        }
+        std::string Describe(const Slot& slot)
+        {
+            const auto magnitude = slot.disp < 0 ? std::size_t(-std::int64_t(slot.disp)) : std::size_t(slot.disp);
+            return std::string(slot.rbp ? "[rbp" : "[rsp") + (slot.disp < 0 ? "-0x" : "+0x") + Hex(magnitude) + "]";
+        }
+        // Follows one RtlGetDeviceFamilyInfoEnum call to the compare of its device-form output against the handheld form.
+        void FollowFormCall(const Pe& pe, const Bytes& image, std::size_t call, std::size_t callEnd, std::vector<Finding>& findings)
+        {
+            const auto function = pe.Function(call);
+            if (!function.second) return;
+            // The form output is the third argument: find the closest `lea r8,[slot]` and require that r8 is not rewritten after it.
+            Slot slot;
+            std::size_t leaEnd = 0;
+            const auto backLimit = (std::max)(function.first, call > 0x40 ? call - 0x40 : std::size_t{0});
+            for (std::size_t i = call; i-- > backLimit;)
+            {
+                std::size_t length = 0;
+                if (image[i] == 0x4C && image[i + 1] == 0x8D && (image[i + 2] & 0x38) == 0 && Operand(image, i + 2, slot, length)
+                    && i + 2 + length <= call) { leaEnd = i + 2 + length; break; }
+            }
+            if (!leaEnd) return;
+            for (std::size_t i = leaEnd; i + 3 <= call; ++i)
+                if (((image[i] == 0x45 || image[i] == 0x4D) && image[i + 1] == 0x33 && image[i + 2] == 0xC0)
+                    || ((image[i] == 0x4C || image[i] == 0x4D) && image[i + 1] == 0x8B && (image[i + 2] & 0xF8) == 0xC0)) return;
+            if (Match(image, callEnd, {0x0F, 0x1F, 0x44, 0x00, 0x00})) callEnd += 5;
+            const auto windowEnd = (std::min)(function.second, callEnd + 0x40);
+            for (std::size_t i = callEnd; i + 3 <= windowEnd; ++i)
+            {
+                Slot read;
+                std::size_t length = 0, compare = 0, compareLength = 0;
+                std::string form;
+                if (image[i] == 0x83 && (image[i + 1] & 0x38) == 0x38 && Operand(image, i + 1, read, length) && read.rbp == slot.rbp
+                    && read.disp == slot.disp && i + 1 + length < windowEnd && image[i + 1 + length] == 0x2E)
+                {
+                    compare = i;
+                    compareLength = 2 + length;
+                    form = "cmp dword " + Describe(slot) + ",0x2E";
+                }
+                else if (image[i] == 0x8B && Operand(image, i + 1, read, length) && read.rbp == slot.rbp && read.disp == slot.disp)
+                {
+                    const auto reg = (image[i + 1] >> 3) & 7;
+                    const auto next = i + 1 + length;
+                    if (next + 3 > windowEnd || image[next] != 0x83 || image[next + 1] != 0xF8 + reg || image[next + 2] != 0x2E) continue;
+                    compare = next;
+                    compareLength = 3;
+                    form = "mov r32," + Describe(slot) + "; cmp r32,0x2E";
+                }
+                else continue;
+                const auto use = compare + compareLength;
+                Finding finding{compare, false, "+0x" + Hex(compare) + ": " + form};
+                const auto jump = [&](std::size_t size)
+                {
+                    const std::int64_t relative = size == 2 ? std::int64_t(std::int8_t(image[use + 1]))
+                        : std::int64_t(std::int32_t(pe.U32(use + 2)));
+                    const auto destination = std::int64_t(pe.Rva(use)) + std::int64_t(size) + relative;
+                    const auto total = compareLength + size;
+                    if (destination < 0 || destination > (std::numeric_limits<std::uint32_t>::max)()
+                        || !pe.IsCode(pe.Offset(static_cast<std::uint32_t>(destination)), 1)) return;
+                    const auto fromShort = destination - (std::int64_t(pe.Rva(compare)) + 2);
+                    const auto fromNear = destination - (std::int64_t(pe.Rva(compare)) + 5);
+                    if (fromShort >= -128 && fromShort <= 127)
+                        finding.replacement = {0xEB, static_cast<std::uint8_t>(fromShort)};
+                    else if (total >= 5)
+                        finding.replacement = {0xE9, static_cast<std::uint8_t>(fromNear), static_cast<std::uint8_t>(fromNear >> 8),
+                            static_cast<std::uint8_t>(fromNear >> 16), static_cast<std::uint8_t>(fromNear >> 24)};
+                    else return;
+                    finding.replacement.resize(total, 0x90);
+                    finding.patchable = true;
+                    finding.description += "; je -> jmp (always take the handheld branch)";
+                };
+                if (use + 3 <= windowEnd && image[use] == 0x0F && (image[use + 1] == 0x94 || image[use + 1] == 0x95)
+                    && (image[use + 2] & 0xF8) == 0xC0)
+                {
+                    const auto reg = image[use + 2] & 7;
+                    const bool equal = image[use + 1] == 0x94;
+                    finding.replacement = {static_cast<std::uint8_t>(0xB0 + reg), static_cast<std::uint8_t>(equal ? 1 : 0)};
+                    finding.replacement.resize(compareLength + 3, 0x90);
+                    finding.patchable = true;
+                    finding.description += equal ? "; sete -> mov reg8,1" : "; setne -> mov reg8,0";
+                    finding.known = Match(image, compare, {0x83, 0x7C, 0x24, -1, 0x2E, 0x0F, 0x94, -1});
+                }
+                else if (use + 2 <= windowEnd && image[use] == 0x74) jump(2);
+                else if (use + 6 <= windowEnd && image[use] == 0x0F && image[use + 1] == 0x84) jump(6);
+                else if ((use + 2 <= windowEnd && image[use] == 0x75) || (use + 6 <= windowEnd && image[use] == 0x0F && image[use + 1] == 0x85))
+                {
+                    finding.replacement.assign(compareLength + (image[use] == 0x75 ? 2 : 6), 0x90);
+                    finding.patchable = true;
+                    finding.description += "; jne -> nop (fall through to the handheld path)";
+                }
+                if (!finding.patchable) finding.description += "; result used by [" + Dump(image, use, 4) + "], unsupported shape, not patched";
+                findings.push_back(finding);
+                return;
+            }
         }
         std::int64_t RelativeDestination(const Pe& pe, std::size_t instruction, std::size_t displacementOffset, std::size_t length)
         {
@@ -251,6 +476,26 @@ namespace AnyFSE::Tools::XboxStartup
             sum += static_cast<std::uint32_t>(image.size());
             for (int i = 0; i < 4; ++i) image[offset + i] = static_cast<std::uint8_t>(sum >> (i * 8));
         }
+    }
+    std::vector<Finding> DiscoverHandheldChecks(const Bytes& image)
+    {
+        Require(image.size() <= (std::numeric_limits<std::uint32_t>::max)(), "Oversized PE image");
+        const Pe pe(image);
+        std::vector<Finding> findings;
+        const auto slots = pe.ImportSlots(c::XboxStartupDeviceFormExport);
+        if (slots.empty()) return findings;
+        for (const auto& range : pe.Code())
+        {
+            const std::int64_t base = pe.Rva(range.first);
+            for (std::size_t off = range.first; off + 6 <= range.first + range.second; ++off)
+            {
+                if (image[off] != 0xFF || image[off + 1] != 0x15) continue;
+                const auto target = base + std::int64_t(off - range.first) + 6 + std::int64_t(std::int32_t(pe.U32(off + 2)));
+                if (std::find(slots.begin(), slots.end(), target) == slots.end()) continue;
+                FollowFormCall(pe, image, off > range.first && image[off - 1] == 0x48 ? off - 1 : off, off + 6, findings);
+            }
+        }
+        return findings;
     }
     std::vector<Site> BuildPlan(Target target, const Bytes& image)
     {
@@ -314,6 +559,14 @@ namespace AnyFSE::Tools::XboxStartup
                         {static_cast<std::uint8_t>(0xB0 + reg), 1, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90}));
                     off += 7;
                 }
+            // Device-form checks in layouts the byte pattern does not recognize are added as unverified sites.
+            for (const auto& finding : DiscoverHandheldChecks(image))
+            {
+                if (!finding.patchable || finding.known) continue;
+                const bool overlaps = std::any_of(sites.begin(), sites.end(), [&](const Site& site)
+                    { return finding.offset < site.offset + site.replacement.size() && site.offset < finding.offset + finding.replacement.size(); });
+                if (!overlaps) sites.push_back({finding.offset, finding.replacement, State::Original, false, finding.description});
+            }
             // As in upstream, compiler inlining may change the number of identical checks between builds.
             // Every site must still match the complete original/replacement sequence in executable code.
             // Newer builds gate the Settings Gaming Posture page in SettingsEnvironment.Desktop.dll; older builds have no check there.
@@ -325,11 +578,11 @@ namespace AnyFSE::Tools::XboxStartup
             Require(ordered[i - 1].offset + ordered[i - 1].replacement.size() <= ordered[i].offset, "Overlapping patch sites");
         return sites;
     }
-    Bytes PatchImage(Target target, const Bytes& image)
+    Bytes PatchImage(Target target, const Bytes& image, bool includeUnverified)
     {
         Bytes result = image;
         for (const auto& site : BuildPlan(target, image))
-            std::copy(site.replacement.begin(), site.replacement.end(), result.begin() + site.offset);
+            if (site.verified || includeUnverified) std::copy(site.replacement.begin(), site.replacement.end(), result.begin() + site.offset);
         Checksum(result, Pe(image).checksum);
         return result;
     }

@@ -67,6 +67,30 @@ x::Bytes Image()
     }
     return data;
 }
+// Adds an ntdll import of RtlGetDeviceFamilyInfoEnum (IAT slot RVA 0x2450) and a function at RVA 0x1400 that queries the device
+// form into [rsp+30h], compares it with the handheld form and consumes the result with `consumer`.
+x::Bytes FormImage(std::initializer_list<std::uint8_t> consumer, std::initializer_list<std::uint8_t> argumentSetup = {0x33, 0xD2, 0x33, 0xC9})
+{
+    auto data = Image();
+    Put32(data, 0x98 + 120, 0x2400);
+    Put32(data, 0x98 + 124, 40);
+    Put32(data, 0xC00, 0x2440);
+    Put32(data, 0xC00 + 12, 0x2470);
+    Put32(data, 0xC00 + 16, 0x2450);
+    Put32(data, 0xC40, 0x2480);
+    Put32(data, 0xC50, 0x2480);
+    const std::string library = "ntdll.dll", function = "RtlGetDeviceFamilyInfoEnum";
+    std::copy(library.begin(), library.end(), data.begin() + 0xC70);
+    std::copy(function.begin(), function.end(), data.begin() + 0xC82);
+    Put32(data, 0x98 + 140, 24);
+    Put32(data, 0xB0C, 0x1400);
+    Put32(data, 0xB10, 0x1440);
+    Put(data, 0x600, {0x4C, 0x8D, 0x44, 0x24, 0x30});
+    Put(data, 0x605, argumentSetup);
+    Put(data, 0x609, {0x48, 0xFF, 0x15, 0x40, 0x10, 0, 0, 0x0F, 0x1F, 0x44, 0, 0, 0x83, 0x7C, 0x24, 0x30, 0x2E});
+    Put(data, 0x61A, consumer);
+    return data;
+}
 void Check(bool valid, const char *name)
 {
     if (!valid) throw std::runtime_error(name);
@@ -249,6 +273,48 @@ int main(int argc, char **argv)
         Reject([&] { x::BuildPlan(x::Target::Settings, noChecks); }, "Reject absence of recognized checks");
         Check(x::BuildPlan(x::Target::SettingsEnvironment, noChecks).empty(), "Optional Settings environment check may be absent");
         Check(x::PatchImage(x::Target::SettingsEnvironment, settings)[0x320] == 0xB1, "Patch Settings environment handheld check");
+
+        // Import-anchored discovery follows the r8 form output, independent of the byte pattern.
+        const auto jne = FormImage({0x75, 0x05, 0xB0, 0x00, 0xC3, 0, 0, 0xB0, 0x01, 0xC3});
+        const auto jnePlan = x::BuildPlan(x::Target::Settings, jne);
+        Check(jnePlan.size() == 1 && jnePlan[0].offset == 0x615 && !jnePlan[0].verified, "Discover jne device-form check as unverified");
+        Check(jnePlan[0].replacement == x::Bytes(7, 0x90), "Fall through jne to the handheld path");
+        Check(x::PatchImage(x::Target::Settings, jne)[0x615] == 0x83, "Never apply unverified sites by default");
+        Check(x::PatchImage(x::Target::Settings, jne, true)[0x61A] == 0x90, "Apply unverified sites after confirmation");
+        const auto je = FormImage({0x74, 0x05, 0xB0, 0x00, 0xC3, 0, 0, 0xB0, 0x01, 0xC3});
+        Check(x::BuildPlan(x::Target::Settings, je)[0].replacement == x::Bytes({0xEB, 0x0A, 0x90, 0x90, 0x90, 0x90, 0x90}),
+            "Rewrite je to an unconditional jump to the same handheld target");
+        const auto knownShape = FormImage({0x0F, 0x94, 0xC0, 0xC3});
+        const auto knownPlan = x::BuildPlan(x::Target::Settings, knownShape);
+        Check(knownPlan.size() == 1 && knownPlan[0].verified, "Keep the validated sete layout verified and avoid duplicates");
+        Check(x::DiscoverHandheldChecks(knownShape).at(0).known, "Discovery recognizes the validated layout");
+        const auto familyOnly = FormImage({0x75, 0x05, 0xB0, 0x00, 0xC3, 0, 0, 0xB0, 0x01, 0xC3}, {0x45, 0x33, 0xC0, 0x90});
+        Check(x::DiscoverHandheldChecks(familyOnly).empty(), "Ignore calls whose form output register is overwritten");
+        const auto conditionalMove = FormImage({0x48, 0x0F, 0x44, 0xC1, 0xC3});
+        const auto reportOnly = x::DiscoverHandheldChecks(conditionalMove);
+        Check(reportOnly.size() == 1 && !reportOnly[0].patchable, "Report unsupported consumers without patching them");
+        Check(x::BuildPlan(x::Target::SettingsEnvironment, conditionalMove).empty(), "Unsupported consumers never enter the plan");
+
+        // An unrecognized export prologue is stubbed only at a real function entry that nothing branches into.
+        auto prologue = game;
+        Put32(prologue, 0x98 + 140, 36);
+        Put32(prologue, 0xB00, 0x1020);
+        Put32(prologue, 0xB04, 0x1038);
+        Put32(prologue, 0xB0C, 0x1040);
+        Put32(prologue, 0xB10, 0x1060);
+        Put32(prologue, 0xB18, 0x1080);
+        Put32(prologue, 0xB1C, 0x1100);
+        Put(prologue, 0x220, {0x40, 0x53, 0x48, 0x83, 0xEC, 0x20});
+        const auto prologuePlan = x::BuildPlan(x::Target::GameMode, prologue);
+        Check(!prologuePlan[0].verified && prologuePlan[1].verified && prologuePlan[2].verified, "Stub unknown prologue only as unverified");
+        Check(x::PatchImage(x::Target::GameMode, prologue)[0x220] == 0x40, "Keep unknown prologue intact without confirmation");
+        Check(x::PatchImage(x::Target::GameMode, prologue, true)[0x220] == 0xB8, "Stub unknown prologue after confirmation");
+        auto branchedInto = prologue;
+        Put(branchedInto, 0x300, {0xE9, 0x1D, 0xFF, 0xFF, 0xFF});
+        Reject([&] { x::BuildPlan(x::Target::GameMode, branchedInto); }, "Reject stub when a branch lands inside the entry bytes");
+        auto notEntry = prologue;
+        Put32(notEntry, 0xB00, 0x101C);
+        Reject([&] { x::BuildPlan(x::Target::GameMode, notEntry); }, "Reject stub away from an x64 function entry");
         for (const std::size_t length : {0u, 1u, 63u, 127u, 255u, 511u})
         {
             const x::Bytes truncated(game.begin(), game.begin() + length);
