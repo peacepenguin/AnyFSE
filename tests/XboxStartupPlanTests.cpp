@@ -108,8 +108,8 @@ int main(int argc, char **argv)
         // Optional read-only compatibility probe: pass GameMode, Settings and Shell DLL paths in that order.
         if (argc != 1)
         {
-            Check(argc == 4, "Expected three DLL paths: gamemode, SettingsHandlers_Gaming, twinui.pcshell");
-            const x::Target targets[] = {x::Target::GameMode, x::Target::Settings, x::Target::Shell};
+            Check(argc == 4 || argc == 5, "Expected gamemode, SettingsHandlers_Gaming, twinui.pcshell, and optionally SettingsEnvironment.Desktop");
+            const x::Target targets[] = {x::Target::GameMode, x::Target::Settings, x::Target::Shell, x::Target::SettingsEnvironment};
             bool supported = true;
             for (int i = 1; i < argc; ++i)
             {

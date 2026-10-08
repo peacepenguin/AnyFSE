@@ -21,11 +21,12 @@ The code lives in two files:
   `scripts/Test-XboxStartup.ps1` exercise without needing a real Windows
   install.
 - [`src/Tools/XboxStartup.cpp`](../src/Tools/XboxStartup.cpp) — everything
-  around that: elevation, reading/writing the three real System32 DLLs,
-  backups, the journal, rollback, and the handheld guard. This is the only
-  file that mutates anything, and only through `Apply()`/`Restore()`.
+  around that: elevation, reading/writing the target System32 DLLs (three
+  always present, plus an optional fourth on newer builds), backups, the
+  journal, rollback, and the handheld guard. This is the only file that mutates
+  anything, and only through `Apply()`/`Restore()`.
 
-### Why these three DLLs, and what API they gate
+### Why these DLLs, and what API they gate
 
 Windows exposes the "Gaming Fullscreen Experience" (the Xbox full-screen
 Home/game-mode UI normally reserved for OEM handhelds) through
@@ -38,27 +39,39 @@ in `C:\Windows\System32`. Three of its exports matter:
 | `CanSetGamingFullScreenExperience` | Whether the current user/session is allowed to toggle it. |
 | `SetGamingFullScreenExperience` | Actually turns it on/off; internally branches on whether the caller is an approved "Home app". |
 
-Two more DLLs independently re-check the device's eligibility before exposing
+More DLLs independently re-check the device's eligibility before exposing
 UI for it:
 
 - **`SettingsHandlers_Gaming.dll`** backs the Windows Settings > Gaming page
-  (two checks: whether to show the Xbox startup controls at all, and which
-  state to default them to).
+  (whether to show the Xbox startup controls at all, and which state to default
+  them to).
 - **`twinui.pcshell.dll`** is part of the shell (`explorer`/`sihost`) and
-  gates the Home-app picker / startup surface shown outside Settings (one
-  check).
+  gates the Home-app picker / startup surface shown outside Settings.
+- **`SettingsEnvironment.Desktop.dll`** gates the Settings "Gaming posture"
+  page on newer builds (it carries `ShouldShowGamingPostureSettings` and the
+  "Choose home app" strings). It is **optional**: builds without this check are
+  patched with no entry here, so AnyFSE skips it when the DLL has no handheld
+  check. It was the missing piece that kept the native Settings page hidden on
+  26100/26200 desktops even after the other three were patched.
 
-All five checks ultimately resolve to the same underlying fact: the device's
+All of these checks ultimately resolve to the same underlying fact: the device's
 *device form*, obtained via the undocumented `ntdll!RtlGetDeviceFamilyInfoEnum`
 (the same API `IsHandheldDevice()` in `XboxStartup.cpp` calls to decide
 whether patching is even allowed to run — see "Handheld guard" below). OEM
 handhelds report device form **46 (`0x2E`)**; everything the patcher touches
 is a place where compiled code compares a cached copy of that value to `0x2E`
-or calls one of the three `gamemode.dll` exports above. `AnyFSE::App::Constants::HandheldDeviceForm`
+or calls one of the three `gamemode.dll` exports above (the handheld-check DLLs
+are `SettingsHandlers_Gaming.dll`, `twinui.pcshell.dll`, and, where present,
+`SettingsEnvironment.Desktop.dll`). `AnyFSE::App::Constants::HandheldDeviceForm`
 holds the same value `46` for the registry-based guard, confirming it is the
 same enum used system-wide.
 
-### The six patch sites, byte for byte
+### The verified patch sites, byte for byte
+
+These are the layouts AnyFSE has validated on real builds and applies without
+confirmation (three gaming sites in `gamemode.dll`, plus one or more handheld
+checks in each handheld-check DLL). Layouts outside these patterns are handled
+by structural discovery instead — see "Surviving new layouts" below.
 
 All offsets below are found dynamically (via the export table or a section
 scan), never hardcoded as fixed file offsets — the bytes themselves are what
@@ -116,9 +129,10 @@ as the compiler keeps emitting the same instructions. `-1`/`??` below means
    rejected. If both forms occur, the legacy home-app gate takes precedence so
    previous patch detection and backup restoration keep producing the same bytes.
 
-**`SettingsHandlers_Gaming.dll` and `twinui.pcshell.dll` —
-resolved via `Target::Settings` / `Target::Shell`, same pattern, scanned
-across every executable section:**
+**`SettingsHandlers_Gaming.dll`, `twinui.pcshell.dll`, and (when present)
+`SettingsEnvironment.Desktop.dll` — resolved via `Target::Settings` /
+`Target::Shell` / `Target::SettingsEnvironment`, same pattern, scanned across
+every executable section:**
 
 ```
 83 7C 24 ??  2E  0F 94 ??
@@ -138,10 +152,13 @@ Patched: `B0+reg 01 90 90 90 90 90 90` → `mov <reg8>, 1` followed by six
 result are both removed; the register is simply forced to `1` ("yes, this is
 a handheld"), using the *same* register the original `sete` would have
 written to, so nothing downstream that reads that register needs to change.
-Each DLL must contain at least one recognized check, and all matching checks
-are patched, as in the upstream patcher. Two Settings sites and one shell site
-were observed on the original example build; those counts are not compatibility
-requirements. Compiler inlining can change the count between Windows builds.
+Each handheld-check DLL must contain at least one recognized check, and all
+matching checks are patched, as in the upstream patcher — except
+`SettingsEnvironment.Desktop.dll`, which is optional and resolves to an empty
+(no-op) plan on builds that have no such check. One Settings site, one shell
+site, and one `SettingsEnvironment` site were observed on 26100/26200; those
+counts are not compatibility requirements. Compiler inlining can change the
+count between Windows builds.
 
 ### Patched vs. original detection, and why mismatches are refused
 
@@ -261,15 +278,17 @@ Activation and DLL restoration do not change `OEM\DeviceForm`. Any older registr
 override must be restored separately. Real handhelds continue to work without needing
 these patches.
 
-`AnyFSE.exe /XboxStartup status` (or `verify`) inspects the three DLLs and shows
+`AnyFSE.exe /XboxStartup status` (or `verify`) inspects the target DLLs and shows
 per-file state, also writing it to the AnyFSE log. Inspection works before the
-normal FSE API availability check. `apply` and `restore` request the same elevated
-handlers used by settings; they require an installed AnyFSE elevation task.
+normal FSE API availability check. `apply`, `apply-unverified`, `restore`, and the
+read-only `scan` request the same elevated handlers used by settings; they require
+an installed AnyFSE elevation task.
 
 ## Compatibility and restoration
 
 The recognized layouts use three gaming API changes and one or more recognized
-handheld checks in each of Settings and shell. Matching byte signatures must be in
+handheld checks in each handheld-check DLL (Settings, shell, and the optional
+`SettingsEnvironment.Desktop.dll`). Matching byte signatures must be in
 executable x64 PE sections. Missing exports, unknown prologues, ambiguous branches,
 missing handheld checks, malformed PE data, and partially patched individual images
 are refused. The upstream project documents testing Windows 11 build 26200.8457;
@@ -284,14 +303,15 @@ These checks improve refusal behavior; they do not establish the semantics of a
 future Windows implementation or replace testing on a disposable machine.
 
 A read-only inspection of local DLLs at version **10.0.26100.9278** now recognizes
-three gaming API sites, one Settings check and one shell check. All three pass
-apply/detect/reapply in memory. The gaming sites are at file offsets `0x10F30`,
-`0x10A30`, and `0x11188` in the inspected file (offsets are still resolved dynamically).
+three gaming API sites, one Settings check, one shell check, and one
+`SettingsEnvironment.Desktop.dll` check. All pass apply/detect/reapply in memory.
+The gaming sites are at file offsets `0x10F30`, `0x10A30`, and `0x11188` in the
+inspected file (offsets are still resolved dynamically).
 The alternate prologue and BOOL support gate above account for the difference
 from the upstream sample layout. This verifies patch planning and idempotence,
 not post-reboot behavior; the actual system files were not modified by the probe.
 
-All three images are validated before replacement. Original bytes are backed up
+All target images are validated before replacement. Original bytes are backed up
 under `%ProgramData%\AnyFSE-XboxStartupBackups`, keyed by the SHA-256 of the full
 patched image. Backup files are retained across upgrades and uninstall. Replacement
 preserves the original owner and DACL and schedules old loaded images for removal
@@ -322,14 +342,16 @@ metadata. Alternate-layout checks cover the support-function prefix, exact direc
 target, absent/ambiguous calls, patched-state detection, and legacy-gate precedence.
 The dev-build CI runs this suite. The suite never writes Windows system files.
 
-After compiling the tests, the same executable can inspect three real DLLs
-without modifying them. In PowerShell:
+After compiling the tests, the same executable can inspect the real DLLs
+without modifying them. The fourth path is optional (newer builds only). In
+PowerShell:
 
 ```powershell
 ./build/tests/XboxStartupPlanTests.exe `
     "$env:SystemRoot/System32/gamemode.dll" `
     "$env:SystemRoot/System32/SettingsHandlers_Gaming.dll" `
-    "$env:SystemRoot/System32/twinui.pcshell.dll"
+    "$env:SystemRoot/System32/twinui.pcshell.dll" `
+    "$env:SystemRoot/System32/SettingsEnvironment.Desktop.dll"
 ```
 
 It reports recognized site counts, offsets and states, verifies apply/detect/reapply
@@ -339,7 +361,7 @@ behavior test and does not bypass the handheld guard in the application.
 
 On a disposable compatible Windows test machine, additionally verify:
 
-- Status reports three original files, then three enabled files after activation.
+- Status reports every target file original, then enabled after activation.
 - Home app selection and startup controls appear on a non-handheld.
 - `OEM\DeviceForm` remains unchanged during both apply and restore.
 - Native Xbox and an AnyFSE launcher each start at sign-in when selected.
@@ -355,7 +377,7 @@ Installing or starting AnyFSE does not apply the desktop DLL patches. On an Ally
 test normal handheld behavior first; enable the experimental patches only if needed.
 The function-hook prototype discussed for future work is not implemented in this build.
 
-Before applying or restoring, all three supported DLL images are snapshotted under
+Before applying or restoring, all supported DLL images present are snapshotted under
 `%ProgramData%\AnyFSE-XboxStartupBackups`, including unchanged images. Each
 `<dll>.<SHA256>.snapshot` is verified by reading it back before any replacement.
 Original restore backups are separately named `.original` and also verified.
