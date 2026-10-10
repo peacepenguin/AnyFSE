@@ -33,6 +33,7 @@ namespace AnyFSE::App::AppSettings::Settings::Page
             , m_fseExitOnHomeExitToggle(m_theme)
             , m_asAdminToggle(m_theme)
             , m_customSettingsToggle(m_theme)
+            , m_exitOnWindowCloseToggle(m_theme)
             , m_additionalArgumentsEdit(m_theme)
             , m_processNameEdit(m_theme)
             , m_titleEdit(m_theme)
@@ -83,6 +84,7 @@ namespace AnyFSE::App::AppSettings::Settings::Page
         Toggle m_fseExitOnHomeExitToggle;
         Toggle m_asAdminToggle;
         Toggle m_customSettingsToggle;
+        Toggle m_exitOnWindowCloseToggle;
         Button m_customResetButton;
 
         TextBox m_additionalArgumentsEdit;

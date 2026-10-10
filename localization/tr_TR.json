@@ -99,6 +99,8 @@
   "settingsWindowClassNameDescription": "Uygulama ana pencere sınıfı",
   "settingsFieldWindowTitle": "Pencere başlığı adı",
   "settingsWindowTitleDescription": "Uygulama penceresi etkinleştirildiğinde görünen başlık",
+  "settingsExitOnWindowClose": "Pencere kapandığında FSE'den çık",
+  "settingsExitOnWindowCloseDescription": "Arka planda çalışmaya devam eden uygulamalar için (Steam Big Picture gibi), işlemin sonlanmasını beklemek yerine algılanan pencere kapandığında tam ekran deneyiminden çık",
   "settingsAlternativeModeDetection": "Alternatif mod algılama",
   "settingsAlternativeModeDetectionDescription": "Ev uygulamasının başlatıldığını algılamak için alternatif komutlar",
   "settingsSecondaryProcessName": "İkincil işlem adı",

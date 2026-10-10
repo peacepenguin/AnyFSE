@@ -99,6 +99,8 @@
   "settingsWindowClassNameDescription": "Classe de la fenêtre",
   "settingsFieldWindowTitle": "Titre de fenêtre",
   "settingsWindowTitleDescription": "Titre de la fenêtre de l'app active",
+  "settingsExitOnWindowClose": "Quitter le FSE à la fermeture de la fenêtre",
+  "settingsExitOnWindowCloseDescription": "Pour les applications qui continuent de s'exécuter en arrière-plan (comme Steam Big Picture), quitter l'expérience plein écran lorsque la fenêtre détectée se ferme, au lieu d'attendre la fin du processus",
   "settingsAlternativeModeDetection": "Détection du mode alternatif",
   "settingsAlternativeModeDetectionDescription": "Détection du mode alternatif",
   "settingsSecondaryProcessName": "Nom du processus secondaire",

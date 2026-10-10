@@ -210,6 +210,7 @@ namespace AnyFSE::Configuration
             out.ProcessNameAlt  = config.value(jp("/Launcher/ProcessNameAlt"), out.ProcessNameAlt);
             out.ClassNameAlt    = config.value(jp("/Launcher/ClassNameAlt"),   out.ClassNameAlt);
             out.WindowTitleAlt  = config.value(jp("/Launcher/WindowTitleAlt"), out.WindowTitleAlt);
+            out.ExitOnWindowClose = config.value(jp("/Launcher/ExitOnWindowClose"), out.ExitOnWindowClose);
             out.IconFile        = config.value(jp("/Launcher/IconFile"),       out.IconFile);
         }
         return true;
@@ -238,6 +239,7 @@ namespace AnyFSE::Configuration
         config["Launcher"]["ProcessNameAlt"]    = Launcher.ProcessNameAlt;
         config["Launcher"]["ClassNameAlt"]      = Launcher.ClassNameAlt;
         config["Launcher"]["WindowTitleAlt"]    = Launcher.WindowTitleAlt;
+        config["Launcher"]["ExitOnWindowClose"] = Launcher.ExitOnWindowClose;
         config["Launcher"]["IconFile"]          = Launcher.IconFile;
 
         config["Splash"]["ShowAnimation"]       = SplashShowAnimation;

@@ -101,6 +101,8 @@
   "settingsWindowClassNameDescription": "Classe della finestra principale dell'applicazione",
   "settingsFieldWindowTitle": "Titolo della finestra",
   "settingsWindowTitleDescription": "Titolo della finestra dell'app quando viene attivata",
+  "settingsExitOnWindowClose": "Esci dall'FSE alla chiusura della finestra",
+  "settingsExitOnWindowCloseDescription": "Per le app che restano in esecuzione in background (come Steam Big Picture), esci dall'esperienza a schermo intero quando la finestra rilevata si chiude, invece di attendere la fine del processo",
   "settingsAlternativeModeDetection": "Rilevamento della modalità alternativa",
   "settingsAlternativeModeDetectionDescription": "Parametri per rilevare l'avvio dell'applicazione principale in modalità alternativa",
   "settingsSecondaryProcessName": "Nome del processo secondario",

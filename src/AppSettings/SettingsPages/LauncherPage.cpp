@@ -177,6 +177,12 @@ namespace AnyFSE::App::AppSettings::Settings::Page
             Translate(L"settingsFieldWindowTitle"),
             Translate(L"settingsWindowTitleDescription"),
             m_titleEdit,
+            Layout::LineHeightSmall, 0, Layout::LineSmallMargin));
+
+        primarySettingsLine.AddGroupItem(&m_dialog.AddSettingsLine(m_pageLinesList, pageTop,
+            Translate(L"settingsExitOnWindowClose"),
+            Translate(L"settingsExitOnWindowCloseDescription"),
+            m_exitOnWindowCloseToggle,
             Layout::LineHeightSmall, Layout::LinePadding, Layout::LineSmallMargin));
 
         SettingsLine & secondarySettingsLine = m_dialog.AddSettingsLine(m_pageLinesList, pageTop,
@@ -224,6 +230,7 @@ namespace AnyFSE::App::AppSettings::Settings::Page
         m_titleAltEdit.OnChanged += delegate(UpdateCustomResetEnabled);
         m_classEdit.OnChanged += delegate(UpdateCustomResetEnabled);
         m_classAltEdit.OnChanged += delegate(UpdateCustomResetEnabled);
+        m_exitOnWindowCloseToggle.OnChanged += delegate(UpdateCustomResetEnabled);
     }
 
     void LauncherPage::LoadControls()
@@ -292,6 +299,7 @@ namespace AnyFSE::App::AppSettings::Settings::Page
         Config::Launcher.WindowTitleAlt = m_titleAltEdit.GetText();
         Config::Launcher.ClassName = m_classEdit.GetText();
         Config::Launcher.ClassNameAlt = m_classAltEdit.GetText();
+        Config::Launcher.ExitOnWindowClose = m_exitOnWindowCloseToggle.GetCheck();
         Config::Launcher.IconFile = m_config.IconFile;
     }
 
@@ -436,6 +444,7 @@ namespace AnyFSE::App::AppSettings::Settings::Page
             || Unicode::to_lower(m_titleAltEdit.GetText()) != Unicode::to_lower(m_defaultConfig.WindowTitleAlt)
             || Unicode::to_lower(m_classEdit.GetText()) != Unicode::to_lower(m_defaultConfig.ClassName)
             || Unicode::to_lower(m_classAltEdit.GetText()) != Unicode::to_lower(m_defaultConfig.ClassNameAlt)
+            || m_exitOnWindowCloseToggle.GetCheck() != m_defaultConfig.ExitOnWindowClose
         ;
         m_customResetButton.Enable(bEnable);
     }
@@ -606,6 +615,7 @@ namespace AnyFSE::App::AppSettings::Settings::Page
         m_titleAltEdit.SetText(m_config.WindowTitleAlt);
         m_classEdit.SetText(m_config.ClassName);
         m_classAltEdit.SetText(m_config.ClassNameAlt);
+        m_exitOnWindowCloseToggle.SetCheck(m_config.ExitOnWindowClose);
 
         UpdateCustomResetEnabled();
     }

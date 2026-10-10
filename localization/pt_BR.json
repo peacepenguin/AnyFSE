@@ -102,6 +102,8 @@
   "settingsWindowClassNameDescription": "Classe da janela principal do aplicativo",
   "settingsFieldWindowTitle": "Título da janela",
   "settingsWindowTitleDescription": "Título da janela do aplicativo quando ativado",
+  "settingsExitOnWindowClose": "Sair do FSE quando a janela fechar",
+  "settingsExitOnWindowCloseDescription": "Para apps que continuam em execução em segundo plano (como o Steam Big Picture), saia da experiência de tela cheia quando a janela detectada fechar, em vez de esperar o processo encerrar",
   "settingsAlternativeModeDetection": "Detecção de modo alternativo",
   "settingsAlternativeModeDetectionDescription": "Configurações para detectar a inicialização do aplicativo inicial em modo alternativo",
   "settingsSecondaryProcessName": "Nome do processo secundário",

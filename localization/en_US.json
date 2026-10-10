@@ -119,6 +119,8 @@
   "settingsWindowClassNameDescription": "Class of application main window",
   "settingsFieldWindowTitle": "Window title",
   "settingsWindowTitleDescription": "Title of app window when it have been activated",
+  "settingsExitOnWindowClose": "Leave FSE when the window closes",
+  "settingsExitOnWindowCloseDescription": "For apps that keep running in the background (like Steam Big Picture), leave full screen experience when the detected window closes instead of waiting for the process to exit",
   "settingsAlternativeModeDetection": "Alternative mode detection",
   "settingsAlternativeModeDetectionDescription": "Parameters to detect home application is started in alternative mode",
   "settingsSecondaryProcessName": "Secondary process name",

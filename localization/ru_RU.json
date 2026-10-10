@@ -101,6 +101,8 @@
   "settingsWindowClassNameDescription": "Класс главного окна приложения",
   "settingsFieldWindowTitle": "Заголовок окна",
   "settingsWindowTitleDescription": "Заголовок окна приложения при активации",
+  "settingsExitOnWindowClose": "Выходить из FSE при закрытии окна",
+  "settingsExitOnWindowCloseDescription": "Для приложений, которые продолжают работать в фоне (например, Steam Big Picture), выходить из полноэкранного режима при закрытии обнаруженного окна, не дожидаясь завершения процесса",
   "settingsAlternativeModeDetection": "Обнаружение альтернативного режима",
   "settingsAlternativeModeDetectionDescription": "Параметры для определения запуска домашнего приложения в альтернативном режиме",
   "settingsSecondaryProcessName": "Вторичное имя процесса",
