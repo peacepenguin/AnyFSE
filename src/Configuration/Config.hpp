@@ -75,6 +75,9 @@ namespace AnyFSE::Configuration
         std::wstring WindowTitleAlt;
         std::wstring IconFile;
         bool IsTrayAggressive = false;
+        // Some home apps keep their process running after their window closes (e.g. Steam stays resident when Big Picture
+        // mode is exited). For these, leaving FSE is driven by the launcher window disappearing, not the process exiting.
+        bool ExitOnWindowClose = false;
         std::wstring ActivationProtocol;
         bool IsCustom = false;
         bool IsPortable = false;

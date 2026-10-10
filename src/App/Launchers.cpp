@@ -41,6 +41,33 @@ namespace AnyFSE::App::Launchers
 
     bool WaitLauncherExit()
     {
+        if (Config::Launcher.ExitOnWindowClose)
+        {
+            // The home app's process stays resident (e.g. Steam after Big Picture exits), so watch the launcher window instead.
+            // When it is gone, report "not restarted" so the caller leaves FSE.
+            while (true)
+            {
+                Sleep(1000);
+                Config::LoadExitFSEOnHomeExit();
+                if (!Config::ExitFSEOnHomeExit || !App::GamingExperience::IsFullscreenMode())
+                {
+                    return false;
+                }
+                if (Launchers::IsLauncherActiveOrMinimized())
+                {
+                    continue;
+                }
+                // Confirm the window is really gone, not momentarily absent during a BPM transition, before leaving FSE.
+                Sleep(1000);
+                if (Launchers::IsLauncherActiveOrMinimized())
+                {
+                    continue;
+                }
+                log.Debug("Launcher window closed for %s (window-close mode); leaving FSE", Unicode::to_string(Config::Launcher.Name).c_str());
+                return false;
+            }
+        }
+
         while (HANDLE hProcess = Launchers::GetLauncherProcess())
         {
             log.Debug("Start waiting process %#08x for %s", hProcess, Unicode::to_string(Config::Launcher.Name).c_str());

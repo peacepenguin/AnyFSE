@@ -81,6 +81,10 @@ namespace AnyFSE::Configuration
             SteamBigPicture.ProcessName = L"steamwebhelper.exe";
             SteamBigPicture.ClassName = L"SDL_app";
             SteamBigPicture.IsTrayAggressive = true;
+            // Steam stays running after Big Picture is exited (or when the user leaves BPM but keeps Steam open), so the
+            // borderless BPM window (SDL_app without WS_THICKFRAME, unlike the resizable desktop window) disappearing is the
+            // exit signal, not the steamwebhelper.exe process.
+            SteamBigPicture.ExitOnWindowClose = true;
             result.push_back(SteamBigPicture);
         }
         {
